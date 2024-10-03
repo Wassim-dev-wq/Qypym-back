@@ -1,0 +1,123 @@
+name: Qodana Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  JAVA_VERSION: '17'
+  DISTRIBUTION: 'temurin'
+
+jobs:
+  qodana-scan:
+    name: Qodana Code Quality Scan
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Set Up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.DISTRIBUTION }}
+
+      - name: Restore Qodana Cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ runner.temp }}/qodana/caches
+          key: qodana-cache-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            qodana-cache-${{ runner.os }}-
+
+      - name: Run Qodana Scan
+        uses: JetBrains/qodana-action@v2024.2.3
+        with:
+          args: >-
+            --baseline,qodana.sarif.json,
+            --fail-threshold,10,
+          upload-result: 'true'
+          pr-mode: 'true'
+          use-annotations: 'true'
+        env:
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Qodana SARIF Report as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: qodana-report
+          path: ${{ runner.temp }}/qodana/results/qodana.sarif.json
+        if: always()
+
+      - name: Save Qodana Cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ runner.temp }}/qodana/caches
+          key: qodana-cache-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            qodana-cache-${{ runner.os }}-
+
+  apply-fixes:
+    name: Apply Qodana Fixes
+    needs: qodana-scan
+    runs-on: ubuntu-latest
+    if: failure()
+
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+
+    steps:
+      - name: Checkout Repository for Fixes
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Set Up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.DISTRIBUTION }}
+
+      - name: Run Qodana to Apply Fixes
+        uses: JetBrains/qodana-action@v2024.2.3
+        with:
+          args: |
+            --apply-fixes                           
+            --push-fixes=pull-request                
+            --cleanup
+        env:
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  report-status:
+    name: Report Qodana Status
+    needs: [ qodana-scan, apply-fixes ]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Report Qodana Scan Status
+        run: |
+          if [ "${{ needs.qodana-scan.result }}" == "success" ]; then
+            echo "Qodana code quality checks passed ✅"
+            exit 0
+          else
+            echo "Qodana code quality checks failed ❌"
+            exit 1
+          fi

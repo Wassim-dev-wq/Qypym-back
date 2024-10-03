@@ -1,0 +1,67 @@
+name: Maven CI/CD
+
+on:
+  push:
+    branches: [ main, develop, 'feature/**', 'release/**', 'hotfix/**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  JAVA_VERSION: '17'
+  DISTRIBUTION: 'temurin'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.DISTRIBUTION }}
+          cache: 'maven'
+
+      - name: Build with Maven
+        run: mvn -B clean package -DskipTests
+
+      - name: Run Tests
+        run: mvn -B test
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Fivy-${{ github.sha }}
+          path: '**/target/*.jar'
+
+  verify-main:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify main branch
+        run: |
+          echo "Main branch verified."
+
+  check-all-jobs:
+    needs: [build-and-test, verify-main]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs status
+        run: |
+          if [ "${{ needs.build-and-test.result }}" == "success" ]; then
+            if [ "${{ needs.verify-main.result }}" == "success" ] || [ "${{ needs.verify-main.result }}" == "skipped" ]; then
+              echo "All jobs completed successfully ✅"
+              exit 0
+            else
+              echo "Verify main branch job failed ❌"
+              exit 1
+            fi
+          else
+            echo "Build and test job failed ❌"
+            exit 1
+          fi
+
