@@ -1,0 +1,62 @@
+
+
+services:
+  config-server:
+    build: ./config-server
+    image: config-server
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    networks:
+      - fivy-network
+    volumes:
+      - ~/.ssh:/root/.ssh
+    environment:
+      - GIT_PRIVATE_KEY=${GIT_PRIVATE_KEY}
+    depends_on:
+      - service-discovery
+
+  service-discovery:
+    build: ./service-discovery
+    image: service-discovery
+    container_name: service-discovery
+    ports:
+      - "8761:8761"
+    networks:
+      - fivy-network
+    depends_on:
+      - rabbitmq
+
+  api-gateway:
+    build: ./api-gateway
+    image: api-gateway
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    networks:
+      - fivy-network
+    depends_on:
+      - config-server
+      - service-discovery
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+      - SPRING_CLOUD_CONFIG_FAIL_FAST=true
+      - SPRING_CLOUD_CONFIG_RETRY_INITIAL_INTERVAL=1000
+      - SPRING_CLOUD_CONFIG_RETRY_MAX_ATTEMPTS=10
+      - SPRING_CLOUD_CONFIG_RETRY_MULTIPLIER=1.5
+      - SPRING_CLOUD_CONFIG_RETRY_MAX_INTERVAL=2000
+      - SPRING_RABBITMQ_HOST=rabbitmq
+    restart: on-failure:5
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - fivy-network
+
+networks:
+  fivy-network:
