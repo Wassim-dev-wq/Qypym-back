@@ -11,6 +11,9 @@
     <name>Fivy Parent Project</name>
 
     <modules>
+        <module>api-gateway</module>
+        <module>service-discovery</module>
+        <module>config-server</module>
     </modules>
 
     <properties>
@@ -37,6 +40,13 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+    </dependencies>
 
     <build>
         <pluginManagement>
