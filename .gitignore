@@ -49,6 +49,10 @@ build/
 # Mobile Tools for Java (J2ME)
 .mtj.tmp/
 
+known_hosts
+.ssh/
+
+
 # Package Files #
 *.jar
 *.war
