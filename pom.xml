@@ -11,9 +11,10 @@
     <name>Fivy Parent Project</name>
 
     <modules>
-        <!-- <module>api-gateway</module> -->
-        <module>service-discovery</module>
-        <module>config-server</module>
+        <module>api-gateway</module>
+        <!--  <module>service-discovery</module> -->
+        <!--  <module>config-server</module>-->
+        <!--  <module>api-gateway</module>-->
     </modules>
 
     <properties>

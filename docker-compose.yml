@@ -1,5 +1,4 @@
-
-
+version: '3.8'
 services:
   config-server:
     build: ./config-server
@@ -24,8 +23,6 @@ services:
       - "8761:8761"
     networks:
       - fivy-network
-    depends_on:
-      - rabbitmq
 
   api-gateway:
     build: ./api-gateway
@@ -38,6 +35,7 @@ services:
     depends_on:
       - config-server
       - service-discovery
+      - keycloak-service
     environment:
       - SPRING_PROFILES_ACTIVE=dev
       - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
@@ -46,17 +44,118 @@ services:
       - SPRING_CLOUD_CONFIG_RETRY_MAX_ATTEMPTS=10
       - SPRING_CLOUD_CONFIG_RETRY_MULTIPLIER=1.5
       - SPRING_CLOUD_CONFIG_RETRY_MAX_INTERVAL=2000
-      - SPRING_RABBITMQ_HOST=rabbitmq
+      - KEYCLOAK_SERVER_URL=http://keycloak:8080/auth
+      - KEYCLOAK_REALM=myrealm
+      - KEYCLOAK_CLIENT_ID=api-gateway
+      - KEYCLOAK_CLIENT_SECRET=<your_client_secret>
     restart: on-failure:5
+
+  db:
+    image: postgres:17
+    container_name: postgres_db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks:
+      - fivy-network
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}" ]
+      interval: 10s
+      retries: 5
+      timeout: 5s
+      start_period: 30s
+
+
+  user-service:
+    build: ./user-service
+    image: user-service
+    container_name: user-service
+    networks:
+      - fivy-network
+    depends_on:
+      - config-server
+      - service-discovery
+      - api-gateway
+      - db
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:8888
+      - SPRING_CLOUD_CONFIG_FAIL_FAST=true
+      - SPRING_CLOUD_CONFIG_RETRY_INITIAL_INTERVAL=1000
+      - SPRING_CLOUD_CONFIG_RETRY_MAX_ATTEMPTS=10
+      - SPRING_CLOUD_CONFIG_RETRY_MULTIPLIER=1.5
+      - SPRING_CLOUD_CONFIG_RETRY_MAX_INTERVAL=2000
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/${POSTGRES_DB}
+      - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER}
+      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
+    restart: on-failure:5
+
+  auth-service:
+    build: ./auth-service
+    image: auth-service
+    container_name: auth-service
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - KEYCLOAK_REALM=fivy-realm
+      - KEYCLOAK_AUTH_URL=http://keycloak-service:8180
+      - KEYCLOAK_RESOURCE=fivy-client
+      - KEYCLOAK_SECRET=dmcwGLAFWiQs8gIqs2FssMcjWHoKrfK4
+      - JAVA_TOOL_OPTIONS=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+    ports:
+      - "8089:8089"
+      - "5005:5005"
+    networks:
+      - fivy-network
+
+  keycloak-service:
+    build: ./keycloak-service
+    image: keycloak-service
+    container_name: keycloak-service
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "8180:8180"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - fivy-network
 
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
+    hostname: rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
     networks:
       - fivy-network
 
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+    networks:
+        - fivy-network
+
 networks:
   fivy-network:
+
+volumes:
+  db-data:
+
