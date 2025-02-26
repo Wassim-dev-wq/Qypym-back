@@ -9,9 +9,6 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.web.server.SecurityWebFilterChain;
-import org.springframework.security.web.server.context.NoOpServerSecurityContextRepository;
-import org.springframework.web.server.ServerWebExchange;
-import reactor.core.publisher.Mono;
 
 @Configuration
 @EnableWebFluxSecurity
@@ -23,26 +20,19 @@ public class SecurityConfig {
 
     @Bean
     public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
-        logger.info("Initializing SecurityWebFilterChain configuration");
+        logger.info("Initializing security configuration");
 
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
-                .authorizeExchange(exchange -> {
-                    logger.debug("Configuring authorization rules");
-                    exchange
-                            .pathMatchers("/api/v1/auth/**").permitAll()
-                            .pathMatchers("/api/v1/users/**").hasRole("USER")
-                            .anyExchange().authenticated();
-                })
+                .authorizeExchange(exchange -> exchange
+                        .pathMatchers("/actuator/**").permitAll()
+                        .pathMatchers("/api/v1/auth/**").permitAll()
+                        .pathMatchers(HttpMethod.OPTIONS).permitAll()
+                        .pathMatchers("/api/v1/users/**").authenticated()
+                        .pathMatchers("/api/v1/matches","/api/v1/matches/**").authenticated()
+                        .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(token ->
-                                Mono.deferContextual(contextView -> {
-                                    if (contextView.hasKey(ServerWebExchange.class)) {
-                                        return jwtAuthConverter.convert(token);
-                                    }
-                                    return jwtAuthConverter.convert(token);
-                                })
-                        ))
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthConverter))
                 )
                 .build();
     }
