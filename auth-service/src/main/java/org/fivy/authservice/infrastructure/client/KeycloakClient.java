@@ -3,9 +3,10 @@ package org.fivy.authservice.infrastructure.client;
 import jakarta.ws.rs.core.Response;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.fivy.authservice.api.dto.LoginRequest;
-import org.fivy.authservice.api.dto.TokenResponse;
-import org.fivy.authservice.api.dto.UserRegistrationRequest;
+import org.fivy.authservice.api.dto.request.LoginRequest;
+import org.fivy.authservice.api.dto.request.UserRegistrationRequest;
+import org.fivy.authservice.api.dto.response.RefreshTokenResponse;
+import org.fivy.authservice.api.dto.response.TokenResponse;
 import org.fivy.authservice.infrastructure.config.KeycloakProperties;
 import org.fivy.authservice.shared.exception.AuthException;
 import org.keycloak.OAuth2Constants;
@@ -14,11 +15,15 @@ import org.keycloak.admin.client.KeycloakBuilder;
 import org.keycloak.representations.AccessTokenResponse;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.*;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -137,6 +142,88 @@ public class KeycloakClient {
         } catch (Exception e) {
             log.error("Error creating user in Keycloak", e);
             throw new AuthException("Failed to create user: " + e.getMessage(), "KEYCLOAK_ERROR", HttpStatus.INTERNAL_SERVER_ERROR, e);
+        }
+    }
+
+    public boolean verifyToken(String bearerToken) {
+        try {
+            if (!bearerToken.startsWith("Bearer ")) {
+                throw new AuthException("Invalid token format", "INVALID_TOKEN_FORMAT", HttpStatus.UNAUTHORIZED);
+            }
+            String token = bearerToken.substring(7);
+            MultiValueMap<String, String> parameters = new LinkedMultiValueMap<>();
+            parameters.add("token", token);
+            parameters.add("client_id", properties.getClientId());
+            parameters.add("client_secret", properties.getClientSecret());
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+            HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<>(parameters, headers);
+            String introspectionUrl = String.format("%s/realms/%s/protocol/openid-connect/token/introspect", properties.getAuthServerUrl(), properties.getRealm());
+            ResponseEntity<Map> response = keycloakRestTemplate.postForEntity(introspectionUrl, requestEntity, Map.class);
+            if (response.getBody() != null && response.getBody().containsKey("active")) {
+                return Boolean.TRUE.equals(response.getBody().get("active"));
+            }
+            return false;
+        } catch (RestClientException e) {
+            log.error("Failed to verify token", e);
+            throw new AuthException("Token verification failed", "TOKEN_VERIFICATION_FAILED", HttpStatus.UNAUTHORIZED, e);
+        } catch (Exception e) {
+            log.error("Unexpected error during token verification", e);
+            throw new AuthException("Token verification failed", "TOKEN_VERIFICATION_FAILED", HttpStatus.INTERNAL_SERVER_ERROR, e);
+        }
+    }
+
+    public RefreshTokenResponse refreshToken(String refreshToken) {
+        log.debug("Initiating token refresh");
+
+        try {
+            MultiValueMap<String, String> parameters = new LinkedMultiValueMap<>();
+            parameters.add("grant_type", "refresh_token");
+            parameters.add("client_id", properties.getClientId());
+            parameters.add("client_secret", properties.getClientSecret());
+            parameters.add("refresh_token", refreshToken);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+            HttpEntity<MultiValueMap<String, String>> requestEntity =
+                    new HttpEntity<>(parameters, headers);
+            String tokenUrl = String.format("%s/realms/%s/protocol/openid-connect/token",
+                    properties.getAuthServerUrl(),
+                    properties.getRealm());
+            ResponseEntity<AccessTokenResponse> response = keycloakRestTemplate.postForEntity(
+                    tokenUrl,
+                    requestEntity,
+                    AccessTokenResponse.class
+            );
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                throw new AuthException(
+                        "Invalid refresh token response",
+                        "INVALID_REFRESH_TOKEN",
+                        HttpStatus.UNAUTHORIZED
+                );
+            }
+            AccessTokenResponse tokenResponse = response.getBody();
+            return RefreshTokenResponse.builder()
+                    .accessToken(tokenResponse.getToken())
+                    .refreshToken(tokenResponse.getRefreshToken())
+                    .expiresIn(tokenResponse.getExpiresIn())
+                    .build();
+
+        } catch (RestClientException e) {
+            log.error("Failed to refresh token", e);
+            throw new AuthException(
+                    "Token refresh failed",
+                    "TOKEN_REFRESH_FAILED",
+                    HttpStatus.UNAUTHORIZED,
+                    e
+            );
+        } catch (Exception e) {
+            log.error("Unexpected error during token refresh", e);
+            throw new AuthException(
+                    "Token refresh failed",
+                    "TOKEN_REFRESH_FAILED",
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    e
+            );
         }
     }
 

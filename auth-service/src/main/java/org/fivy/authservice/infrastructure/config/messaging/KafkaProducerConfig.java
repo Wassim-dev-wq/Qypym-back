@@ -34,7 +34,7 @@ public class KafkaProducerConfig {
         configProps.put(org.apache.kafka.clients.producer.ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         configProps.put(org.apache.kafka.clients.producer.ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, org.apache.kafka.common.serialization.StringSerializer.class);
         configProps.put(org.apache.kafka.clients.producer.ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
-        configProps.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false); // Optional: Remove type info headers if not needed
+        configProps.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
 
         return new DefaultKafkaProducerFactory<>(configProps, new org.apache.kafka.common.serialization.StringSerializer(), new JsonSerializer<>(objectMapper()));
     }

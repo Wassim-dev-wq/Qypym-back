@@ -1,4 +1,4 @@
-package org.fivy.authservice.api.dto;
+package org.fivy.authservice.api.dto.response;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
