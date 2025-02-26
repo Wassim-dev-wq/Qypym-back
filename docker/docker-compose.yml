@@ -1,0 +1,300 @@
+version: '3.8'
+
+services:
+  service-registry:
+    build:
+      context: ..
+      dockerfile: service-registry/Dockerfile
+    container_name: srv-registry-${ENV}
+    networks:
+      - qypym-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${SERVICE_REGISTRY_CONTAINER_PORT}/actuator/health"]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${SERVICE_REGISTRY_START_PERIOD:-30s}
+
+  auth-service:
+    build:
+      context: ..
+      dockerfile: auth-service/Dockerfile
+    container_name: svc-auth-${ENV}
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    environment:
+      - SERVER_PORT=${AUTH_SERVICE_CONTAINER_PORT}
+      - KC_REALM=${KC_REALM}
+      - KC_AUTH_URL=${KC_AUTH_URL}
+      - KC_CLIENT_ID=${KC_CLIENT_ID}
+      - KC_CLIENT_SECRET=${KC_CLIENT_SECRET}
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=${EUREKA_DEFAULT_ZONE:-http://service-registry:${SERVICE_REGISTRY_CONTAINER_PORT}/eureka}
+    networks:
+      - qypym-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${AUTH_SERVICE_CONTAINER_PORT}/actuator/health" ]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${AUTH_SERVICE_START_PERIOD:-50s}
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: api-gateway/Dockerfile
+    container_name: api-gateway-${ENV}
+    networks:
+      - qypym-network
+    environment:
+      - SERVICE_REGISTRY_DEFAULTZONE=${EUREKA_DEFAULT_ZONE:-http://service-registry:${SERVICE_REGISTRY_CONTAINER_PORT}/eureka}
+      - SPRING_APPLICATION_NAME=${API_GATEWAY_NAME:-api-gateway}
+      - SERVER_PORT=${API_GATEWAY_CONTAINER_PORT}
+      - SPRING_CONFIG_IMPORT=${CONFIG_SERVER_IMPORT:-optional:configserver:http://config-server:${CONFIG_SERVER_CONTAINER_PORT}}
+      - KEYCLOAK_CLIENT_ID=${KC_CLIENT_ID}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=${KC_JWT_ISSUER_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=${KC_JWK_SET_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}/protocol/openid-connect/certs}
+      - KEYCLOAK_AUTH_SERVER_URL=${KC_AUTH_SERVER_URL:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}}
+    depends_on:
+      service-registry:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${API_GATEWAY_CONTAINER_PORT}/actuator/health"]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${API_GATEWAY_START_PERIOD:-40s}
+    restart: unless-stopped
+
+  keycloak:
+    build: ../keycloak-service
+    container_name: auth-keycloak-${ENV}
+    environment:
+      - KC_DB=${KC_DB_TYPE:-postgres}
+      - KC_DB_URL=jdbc:postgresql://${KC_DB_HOST:-auth-keycloak-db-${ENV}}:${KC_DB_CONTAINER_PORT}/${KC_DB_NAME}
+      - KC_DB_USERNAME=${KC_DB_USERNAME}
+      - KC_DB_PASSWORD=${KC_DB_PASSWORD}
+      - KC_SPI_HOSTNAME_DEFAULT_FRONTEND_URL=${KC_FRONTEND_URL:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}}
+      - KC_HOSTNAME_PATH=${KC_HOSTNAME_PATH:-keycloak}
+      - KC_HOSTNAME_STRICT=${KC_HOSTNAME_STRICT:-false}
+      - KC_HOSTNAME_STRICT_HTTPS=${KC_HOSTNAME_STRICT_HTTPS:-false}
+      - KC_HEALTH_ENABLED=${KC_HEALTH_ENABLED:-true}
+      - KC_METRICS_ENABLED=${KC_METRICS_ENABLED:-true}
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    networks:
+      - qypym-network
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/${KEYCLOAK_HEALTH_CONTAINER_PORT} && printf \"GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && head -n 1 <&3 | grep \"200 OK\" || exit 1'"]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${KEYCLOAK_START_PERIOD:-60s}
+
+  user-service:
+    build:
+      context: ..
+      dockerfile: user-service/Dockerfile
+    container_name: svc-user-${ENV}
+    networks:
+      - qypym-network
+    depends_on:
+      user-service-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    environment:
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}
+      - SERVER_PORT=${USER_SERVICE_CONTAINER_PORT}
+      - USER_DB_HOST=${USER_DB_HOST:-db-user-${ENV}}
+      - USER_DB_PORT=${USER_DB_CONTAINER_PORT}
+      - POSTGRES_DB=${USER_DB_NAME}
+      - POSTGRES_USER=${USER_DB_USERNAME}
+      - POSTGRES_PASSWORD=${USER_DB_PASSWORD}
+      - SPRING_REDIS_HOST=${REDIS_HOST:-cache-redis-${ENV}}
+      - SPRING_REDIS_PORT=${REDIS_CONTAINER_PORT}
+      - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD}
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-mq-kafka-${ENV}:${KAFKA_INTERNAL_PORT:-29092}}
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=${EUREKA_DEFAULT_ZONE:-http://service-registry:${SERVICE_REGISTRY_CONTAINER_PORT}/eureka}
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${USER_SERVICE_CONTAINER_PORT}/actuator/health" ]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${USER_SERVICE_START_PERIOD:-40s}
+    restart: unless-stopped
+
+  match-service:
+    build:
+      context: ..
+      dockerfile: match-service/Dockerfile
+    container_name: svc-match-${ENV}
+    networks:
+      - qypym-network
+    depends_on:
+      match-service-db:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    environment:
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}
+      - SERVER_PORT=${MATCH_SERVICE_CONTAINER_PORT}
+      - MATCH_DB_HOST=${MATCH_DB_HOST:-db-match-${ENV}}
+      - MATCH_DB_PORT=${MATCH_DB_CONTAINER_PORT}
+      - POSTGRES_DB=${MATCH_DB_NAME}
+      - POSTGRES_USER=${MATCH_DB_USERNAME}
+      - POSTGRES_PASSWORD=${MATCH_DB_PASSWORD}
+      - SPRING_REDIS_HOST=${REDIS_HOST:-cache-redis-${ENV}}
+      - SPRING_REDIS_PORT=${REDIS_CONTAINER_PORT}
+      - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD}
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=${EUREKA_DEFAULT_ZONE:-http://service-registry:${SERVICE_REGISTRY_CONTAINER_PORT}/eureka}
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${MATCH_SERVICE_CONTAINER_PORT}/actuator/health" ]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${MATCH_SERVICE_START_PERIOD:-40s}
+    restart: unless-stopped
+
+  user-service-db:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: db-user-${ENV}
+    environment:
+      - POSTGRES_DB=${USER_DB_NAME}
+      - POSTGRES_USER=${USER_DB_USERNAME}
+      - POSTGRES_PASSWORD=${USER_DB_PASSWORD}
+      - POSTGRES_HOST_AUTH_METHOD=${POSTGRES_HOST_AUTH_METHOD:-scram-sha-256}
+    volumes:
+      - user_service_data:/var/lib/postgresql/data
+    networks:
+      - qypym-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USERNAME} -d ${USER_DB_NAME}"]
+      interval: ${DB_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${DB_HEALTHCHECK_TIMEOUT:-5s}
+      retries: 3
+      start_period: ${DB_START_PERIOD:-30s}
+    restart: unless-stopped
+
+  match-service-db:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: db-match-${ENV}
+    environment:
+      - POSTGRES_DB=${MATCH_DB_NAME}
+      - POSTGRES_USER=${MATCH_DB_USERNAME}
+      - POSTGRES_PASSWORD=${MATCH_DB_PASSWORD}
+      - POSTGRES_HOST_AUTH_METHOD=${POSTGRES_HOST_AUTH_METHOD:-scram-sha-256}
+    volumes:
+      - match_service_data:/var/lib/postgresql/data
+    networks:
+      - qypym-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MATCH_DB_USERNAME} -d ${MATCH_DB_NAME}"]
+      interval: ${DB_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${DB_HEALTHCHECK_TIMEOUT:-5s}
+      retries: 3
+      start_period: ${DB_START_PERIOD:-30s}
+    restart: unless-stopped
+
+  keycloak-db:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: auth-keycloak-db-${ENV}
+    environment:
+      - POSTGRES_DB=${KC_DB_NAME}
+      - POSTGRES_USER=${KC_DB_USERNAME}
+      - POSTGRES_PASSWORD=${KC_DB_PASSWORD}
+      - POSTGRES_HOST_AUTH_METHOD=${POSTGRES_HOST_AUTH_METHOD:-scram-sha-256}
+    volumes:
+      - keycloak_db_data:/var/lib/postgresql/data
+    networks:
+      - qypym-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KC_DB_USERNAME} -d ${KC_DB_NAME}"]
+      interval: ${DB_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${DB_HEALTHCHECK_TIMEOUT:-5s}
+      retries: 3
+      start_period: ${DB_START_PERIOD:-30s}
+    restart: unless-stopped
+
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    container_name: cache-redis-${ENV}
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - qypym-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: ${REDIS_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${REDIS_HEALTHCHECK_TIMEOUT:-5s}
+      retries: 3
+    restart: unless-stopped
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:${CONFLUENT_VERSION:-latest}
+    container_name: mq-zookeeper-${ENV}
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=${ZOOKEEPER_CONTAINER_PORT}
+      - ZOOKEEPER_TICK_TIME=${ZOOKEEPER_TICK_TIME:-2000}
+    networks:
+      - qypym-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "${ZOOKEEPER_CONTAINER_PORT}"]
+      interval: ${ZK_HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${ZK_HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:${CONFLUENT_VERSION:-latest}
+    container_name: mq-kafka-${ENV}
+    environment:
+      - KAFKA_BROKER_ID=${KAFKA_BROKER_ID:-1}
+      - KAFKA_ZOOKEEPER_CONNECT=mq-zookeeper-${ENV}:${ZOOKEEPER_CONTAINER_PORT}
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=${KAFKA_PROTOCOL_MAP:-PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT}
+      - KAFKA_ADVERTISED_LISTENERS=${KAFKA_ADV_LISTENERS:-PLAINTEXT://mq-kafka-${ENV}:${KAFKA_INTERNAL_PORT:-29092},PLAINTEXT_HOST://localhost:${KAFKA_HOST_PORT}}
+      - KAFKA_LISTENERS=${KAFKA_LISTENERS:-PLAINTEXT://0.0.0.0:${KAFKA_INTERNAL_PORT:-29092},PLAINTEXT_HOST://0.0.0.0:${KAFKA_CONTAINER_PORT}}
+      - KAFKA_INTER_BROKER_LISTENER_NAME=${KAFKA_INTER_BROKER_LISTENER:-PLAINTEXT}
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=${KAFKA_REPLICATION_FACTOR:-1}
+      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=${KAFKA_REBALANCE_DELAY:-0}
+      - KAFKA_NUM_PARTITIONS=${KAFKA_NUM_PARTITIONS:-3}
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - qypym-network
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:${KAFKA_CONTAINER_PORT}", "--list"]
+      interval: ${KAFKA_HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${KAFKA_HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  qypym-network:
+    name: qypym-network-${ENV}
+    driver: bridge
+
+volumes:
+  user_service_data:
+    name: user-data-${ENV}
+  match_service_data:
+    name: match-data-${ENV}
+  keycloak_db_data:
+    name: keycloak-data-${ENV}
+  kafka_data:
+    name: kafka-data-${ENV}
+  redis_data:
+    name: redis-data-${ENV}

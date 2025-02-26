@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  service-registry:
+    ports:
+      - "${SERVICE_REGISTRY_HOST_PORT}:${SERVICE_REGISTRY_CONTAINER_PORT}"
+      - "5006:5006"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    environment:
+      - JAVA_TOOL_OPTIONS=${JAVA_MEMORY_OPTS} ${JAVA_DEBUG_OPTS}5006
+
+  auth-service:
+    ports:
+      - "${AUTH_SERVICE_HOST_PORT}:${AUTH_SERVICE_CONTAINER_PORT}"
+      - "${AUTH_SERVICE_DEBUG_HOST_PORT}:5010"
+    environment:
+      - JAVA_TOOL_OPTIONS=${JAVA_MEMORY_OPTS} ${JAVA_DEBUG_OPTS}5010
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK=INFO
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  api-gateway:
+    ports:
+      - "${API_GATEWAY_HOST_PORT}:${API_GATEWAY_CONTAINER_PORT}"
+      - "5007:5007"
+    environment:
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK=INFO
+      - LOGGING_LEVEL_ORG_SPRING_SECURITY=DEBUG
+      - JAVA_TOOL_OPTIONS=-Xmx200m ${JAVA_DEBUG_OPTS}5007
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  keycloak:
+    ports:
+      - "${KEYCLOAK_HOST_PORT}:${KEYCLOAK_CONTAINER_PORT}"
+      - "${KEYCLOAK_HEALTH_HOST_PORT}:${KEYCLOAK_HEALTH_CONTAINER_PORT}"
+      - "5008:5008"
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USER=${KC_ADMIN_USER}
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=${KC_ADMIN_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  user-service:
+    ports:
+      - "${USER_SERVICE_HOST_PORT}:${USER_SERVICE_CONTAINER_PORT}"
+      - "${USER_SERVICE_DEBUG_HOST_PORT}:${USER_SERVICE_DEBUG_CONTAINER_PORT}"
+    environment:
+      - JAVA_TOOL_OPTIONS=-Xmx200m ${JAVA_DEBUG_OPTS}${USER_SERVICE_DEBUG_CONTAINER_PORT}
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_COM_QYPYM=DEBUG
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  match-service:
+    ports:
+      - "${MATCH_SERVICE_HOST_PORT}:${MATCH_SERVICE_CONTAINER_PORT}"
+      - "${MATCH_SERVICE_DEBUG_HOST_PORT}:${MATCH_SERVICE_DEBUG_CONTAINER_PORT}"
+    environment:
+      - JAVA_TOOL_OPTIONS=-Xmx200m ${JAVA_DEBUG_OPTS}${MATCH_SERVICE_DEBUG_CONTAINER_PORT}
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_COM_QYPYM=DEBUG
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  user-service-db:
+    ports:
+      - "${USER_DB_HOST_PORT}:${USER_DB_CONTAINER_PORT}"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  match-service-db:
+    ports:
+      - "${MATCH_DB_HOST_PORT}:${MATCH_DB_CONTAINER_PORT}"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  keycloak-db:
+    ports:
+      - "${KC_DB_HOST_PORT}:${KC_DB_CONTAINER_PORT}"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  redis:
+    ports:
+      - "${REDIS_HOST_PORT}:${REDIS_CONTAINER_PORT}"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  zookeeper:
+    ports:
+      - "${ZOOKEEPER_HOST_PORT}:${ZOOKEEPER_CONTAINER_PORT}"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  kafka:
+    ports:
+      - "${KAFKA_HOST_PORT}:${KAFKA_CONTAINER_PORT}"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
