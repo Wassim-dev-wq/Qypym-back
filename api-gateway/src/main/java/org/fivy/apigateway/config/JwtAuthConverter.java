@@ -45,9 +45,6 @@ public class JwtAuthConverter implements Converter<Jwt, Mono<AbstractAuthenticat
             }
             exchange.getRequest().mutate()
                     .header("X-User-ID", userId != null ? userId : "")
-                    .header("X-User-Email", email != null ? email : "")
-                    .header("X-User-Name", name != null ? name : "")
-                    .header("X-User-Roles", roles)
                     .build();
             logger.debug("Added user headers - UserId: {}, Email: {}, Roles: {}",
                     userId, email, roles);
