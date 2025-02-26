@@ -23,19 +23,19 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Set Up Java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.DISTRIBUTION }}
 
       - name: Restore Qodana Cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/qodana/caches
           key: qodana-cache-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
@@ -55,15 +55,15 @@ jobs:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload Qodana SARIF Report as Artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: qodana-report
-          path: ${{ runner.temp }}/qodana/results/qodana.sarif.json
-        if: always()
+#      - name: Upload Qodana SARIF Report as Artifact
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: qodana-report
+#          path: ${{ runner.temp }}/qodana/results/qodana.sarif.json
+#        if: always()
 
       - name: Save Qodana Cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/qodana/caches
           key: qodana-cache-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
@@ -83,13 +83,13 @@ jobs:
 
     steps:
       - name: Checkout Repository for Fixes
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
 
       - name: Set Up Java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.DISTRIBUTION }}
@@ -97,10 +97,7 @@ jobs:
       - name: Run Qodana to Apply Fixes
         uses: JetBrains/qodana-action@v2024.2.3
         with:
-          args: |
-            --apply-fixes                           
-            --push-fixes=pull-request                
-            --cleanup
+          args: --apply-fixes --push-fixes=pull-request --cleanup
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up SSH
         run: |
@@ -25,7 +25,7 @@ jobs:
           ssh-keyscan -H github.com >> ~/.ssh/known_hosts  
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.DISTRIBUTION }}
@@ -37,11 +37,11 @@ jobs:
       - name: Run Tests
         run: mvn -B test
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: Fivy-${{ github.sha }}
-          path: '**/target/*.jar'
+#      - name: Upload artifact
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: Fivy-${{ github.sha }}
+#          path: '**/target/*.jar'
 
   verify-main:
     needs: build-and-test
