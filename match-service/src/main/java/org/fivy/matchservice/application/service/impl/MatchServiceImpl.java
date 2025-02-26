@@ -4,18 +4,20 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fivy.matchservice.api.dto.request.CreateMatchRequest;
 import org.fivy.matchservice.api.dto.request.UpdateMatchRequest;
+import org.fivy.matchservice.api.dto.response.MatchDetailsResponse;
 import org.fivy.matchservice.api.dto.response.MatchResponse;
 import org.fivy.matchservice.api.mapper.MatchMapper;
 import org.fivy.matchservice.application.service.MatchService;
 import org.fivy.matchservice.domain.entity.Match;
 import org.fivy.matchservice.domain.entity.MatchPlayer;
+import org.fivy.matchservice.domain.entity.MatchTeam;
+import org.fivy.matchservice.domain.entity.MatchWeather;
+import org.fivy.matchservice.domain.enums.JoinRequestStatus;
 import org.fivy.matchservice.domain.enums.MatchStatus;
-import org.fivy.matchservice.domain.enums.PlayerRole;
-import org.fivy.matchservice.domain.enums.PlayerStatus;
+import org.fivy.matchservice.domain.enums.SkillLevel;
 import org.fivy.matchservice.domain.event.MatchEvent;
 import org.fivy.matchservice.domain.event.MatchEventType;
-import org.fivy.matchservice.domain.repository.MatchPlayerRepository;
-import org.fivy.matchservice.domain.repository.MatchRepository;
+import org.fivy.matchservice.domain.repository.*;
 import org.fivy.matchservice.shared.exception.InvalidMatchStateException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -25,9 +27,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZonedDateTime;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -36,7 +38,12 @@ import java.util.UUID;
 public class MatchServiceImpl implements MatchService {
     private final MatchRepository matchRepository;
     private final MatchPlayerRepository playerRepository;
+    private final MatchTeamRepository matchTeamRepository;
+    private final SavedMatchRepository savedMatchRepository;
+    private final MatchJoinRequestRepository matchJoinRequestRepository;
     private final MatchMapper matchMapper;
+    private final WeatherServiceImpl weatherService;
+    private final MatchWeatherRepository matchWeatherRepository;
     private final KafkaTemplate<String, MatchEvent> kafkaTemplate;
 
     @Override
@@ -46,14 +53,39 @@ public class MatchServiceImpl implements MatchService {
         match.setCreatorId(creatorId);
         match.setStatus(MatchStatus.DRAFT);
         match.setCreatedAt(ZonedDateTime.now());
+        match.setUpdatedAt(ZonedDateTime.now());
+        match.setMaxPlayers(match.getMaxPlayers());
+        match.setMaxPlayersPerTeam(match.getPlayersPerTeam());
         Match savedMatch = matchRepository.save(match);
         log.debug("Match created with ID: {}", savedMatch.getId());
-        MatchPlayer creator = MatchPlayer.builder().match(savedMatch).playerId(creatorId).role(PlayerRole.CREATOR).status(PlayerStatus.JOINED).joinedAt(ZonedDateTime.now().toLocalDateTime()).build();
-        playerRepository.save(creator);
-        log.debug("Creator added as player with ID: {}", creator.getPlayerId());
-//        publishMatchEvent(savedMatch, MatchEventType.MATCH_CREATED);
-
+        createTeamsForMatch(savedMatch);
+        MatchWeather savedWeather = weatherService.fetchAndSaveWeather(savedMatch);
+        if (savedWeather != null) {
+            log.info("Saved weather data for match ID: {}", savedMatch.getId());
+        }
         return matchMapper.toMatchResponse(savedMatch);
+    }
+
+    private void createTeamsForMatch(Match match) {
+        log.debug("Creating teams for match: {} with format: {}", match.getId(), match.getFormat());
+
+        MatchTeam team1 = MatchTeam.builder()
+                .match(match)
+                .teamNumber(1)
+                .name("Team 1")
+                .build();
+        matchTeamRepository.save(team1);
+        log.debug("Created team 1 with ID: {}", team1.getId());
+
+        MatchTeam team2 = MatchTeam.builder()
+                .match(match)
+                .teamNumber(2)
+                .name("Team 2")
+                .build();
+        matchTeamRepository.save(team2);
+        log.debug("Created team 2 with ID: {}", team2.getId());
+
+        log.info("Created {} teams for match ID: {} with format: {}", 2, match.getId(), match.getFormat());
     }
 
     @Override
@@ -75,17 +107,138 @@ public class MatchServiceImpl implements MatchService {
 
     @Override
     @Transactional(readOnly = true)
-    public MatchResponse getMatch(UUID matchId) {
+    public MatchResponse getMatch(UUID matchId, UUID currentUserId) {
         log.debug("Fetching match: {}", matchId);
         Match match = findMatchOrThrow(matchId);
-        return matchMapper.toMatchResponse(match);
+        MatchResponse response = matchMapper.toMatchResponse(match);
+        response.setJoined(playerRepository.existsByMatchIdAndPlayerId(matchId, currentUserId));
+        response.setMaxPlayers(match.getMaxPlayers());
+        response.setJoinedCount(playerRepository.countByMatchId(matchId));
+        response.setSavedCount(savedMatchRepository.countByMatchId(matchId));
+        response.setJoinRequestCount(
+                matchJoinRequestRepository.countByMatchIdAndRequestStatusNotIn(
+                        match.getId(),
+                        List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED)
+                )
+        );        response.setOwner(match.getCreatorId().equals(currentUserId));
+        return response;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MatchDetailsResponse getMatchWithDetails(UUID matchId, UUID currentUserId) {
+        log.debug("Fetching detailed match: {}", matchId);
+        Match match = findMatchWithDetailsOrThrow(matchId);
+        MatchDetailsResponse details = matchMapper.toDetailedMatchResponse(match);
+        details.setOwner(match.getCreatorId().equals(currentUserId));
+        details.setPlayers(mapPlayers(match));
+        details.setTeams(mapTeams(match));
+        details.setCurrentPlayers(match.getPlayers().size());
+        if (match.getWeather() != null) {
+            details.setWeather(matchMapper.toWeatherResponse(match.getWeather()));
+        }
+        log.info(details.toString());
+        return details;
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<MatchResponse> getMatches(Pageable pageable) {
-        log.debug("Fetching matches with pageable: {}", pageable);
-        return matchRepository.findAll(pageable).map(matchMapper::toMatchResponse);
+        return null;
+    }
+
+    private List<MatchDetailsResponse.MatchPlayerResponse> mapPlayers(Match match) {
+        return match.getPlayers().stream()
+                .map(matchMapper::toDetailedPlayerResponse)
+                .collect(Collectors.toList());
+    }
+
+    private List<MatchDetailsResponse.MatchTeamResponse> mapTeams(Match match) {
+        Map<UUID, List<MatchPlayer>> teamPlayersMap = createTeamPlayersMap(match);
+
+        return match.getTeams().stream()
+                .map(team -> buildTeamResponse(team, teamPlayersMap))
+                .collect(Collectors.toList());
+    }
+
+    private Map<UUID, List<MatchPlayer>> createTeamPlayersMap(Match match) {
+        return match.getPlayers().stream()
+                .filter(player -> player.getTeam() != null)
+                .collect(Collectors.groupingBy(
+                        player -> player.getTeam().getId(),
+                        Collectors.toList()
+                ));
+    }
+
+    private MatchDetailsResponse.MatchTeamResponse buildTeamResponse(
+            MatchTeam team,
+            Map<UUID, List<MatchPlayer>> teamPlayersMap) {
+        List<MatchPlayer> teamPlayers = teamPlayersMap.getOrDefault(team.getId(), Collections.emptyList());
+
+        return MatchDetailsResponse.MatchTeamResponse.builder()
+                .id(team.getId())
+                .name(team.getName())
+                .teamNumber(team.getTeamNumber())
+                .players(teamPlayers.stream()
+                        .map(matchMapper::toDetailedPlayerResponse)
+                        .collect(Collectors.toList()))
+                .currentPlayers(teamPlayers.size())
+                .maxPlayers(team.getMatch().getMaxPlayersPerTeam())
+                .build();
+    }
+
+    @Transactional(readOnly = true)
+    public Page<MatchResponse> getMatches(
+            Double latitude,
+            Double longitude,
+            Double distance,
+            String skillLevel,
+            Pageable pageable,
+            UUID currentUserId
+    ) {
+        log.debug("Fetching matches with lat={}, lon={}, dist={}, skill={}",
+                latitude, longitude, distance, skillLevel);
+        Function<Match, MatchResponse> toResponseWithDetails = match -> {
+            MatchResponse response = matchMapper.toMatchResponse(match);
+            response.setOwner(match.getCreatorId().equals(currentUserId));
+            response.setJoined(playerRepository.existsByMatchIdAndPlayerId(match.getId(), currentUserId));
+            response.setMaxPlayers(match.getMaxPlayers());
+            response.setJoinedCount(playerRepository.countByMatchId(match.getId()));
+            response.setSavedCount(savedMatchRepository.countByMatchId(match.getId()));
+            response.setJoinRequestCount(
+                    matchJoinRequestRepository.countByMatchIdAndRequestStatusNotIn(
+                            match.getId(),
+                            List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED)
+                    )
+            );
+            return response;
+        };
+        if (latitude != null && longitude != null && distance != null) {
+            if (skillLevel != null && !skillLevel.isBlank()) {
+                SkillLevel skillEnum = SkillLevel.valueOf(skillLevel.toUpperCase());
+                return matchRepository.findAllWithinDistanceAndSkill(
+                        latitude,
+                        longitude,
+                        distance,
+                        skillEnum,
+                        pageable
+                ).map(toResponseWithDetails);
+            } else {
+                return matchRepository.findAllWithinDistance(
+                        latitude,
+                        longitude,
+                        distance,
+                        pageable
+                ).map(toResponseWithDetails);
+            }
+        }
+        if (skillLevel != null && !skillLevel.isBlank()) {
+            SkillLevel skillEnum = SkillLevel.valueOf(skillLevel.toUpperCase());
+            return matchRepository.findAllBySkillLevel(skillEnum, pageable)
+                    .map(toResponseWithDetails);
+        }
+        return matchRepository.findAll(pageable)
+                .map(toResponseWithDetails);
     }
 
     @Override
@@ -123,6 +276,12 @@ public class MatchServiceImpl implements MatchService {
 
         return matchMapper.toMatchResponse(updatedMatch);
     }
+
+    private Match findMatchWithDetailsOrThrow(UUID matchId) {
+        return matchRepository.findMatchWithDetails(matchId)
+                .orElseThrow(() -> new org.fivy.matchservice.shared.exception.MatchException("Match with details not found with ID: " + matchId, "MATCH_NOT_FOUND", HttpStatus.NOT_FOUND));
+    }
+
     private Match findMatchOrThrow(UUID matchId) {
         return matchRepository.findById(matchId).orElseThrow(() -> new org.fivy.matchservice.shared.exception.MatchException("Match not found with ID: " + matchId, "MATCH_NOT_FOUND", HttpStatus.NOT_FOUND));
     }
@@ -181,7 +340,7 @@ public class MatchServiceImpl implements MatchService {
     private Map<String, String> buildEventData(Match match) {
         Map<String, String> data = new HashMap<>();
         data.put("title", match.getTitle());
-        data.put("format", match.getFormat());
+        data.put("format", match.getFormat().toString());
         data.put("status", match.getStatus().toString());
         data.put("address", match.getLocation().getAddress());
         data.put("latitude", match.getLocation().getCoordinates().getLatitude().toString());
@@ -192,4 +351,5 @@ public class MatchServiceImpl implements MatchService {
         data.put("creatorId", match.getCreatorId().toString());
         return data;
     }
+
 }

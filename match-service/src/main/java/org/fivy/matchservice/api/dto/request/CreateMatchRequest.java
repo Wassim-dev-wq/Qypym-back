@@ -7,6 +7,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.fivy.matchservice.domain.enums.MatchFormat;
 import org.fivy.matchservice.domain.enums.SkillLevel;
 
 import java.time.ZonedDateTime;
@@ -31,9 +32,8 @@ public class CreateMatchRequest {
     @Max(value = 240, message = "Duration must not exceed 240 minutes")
     private Integer duration;
 
-    @NotBlank(message = "Format is required")
-    @Pattern(regexp = "^\\d+v\\d+$")
-    private String format;
+    @NotNull(message = "Format is required")
+    private MatchFormat format;
 
     @NotNull(message = "Location is required")
     @Valid

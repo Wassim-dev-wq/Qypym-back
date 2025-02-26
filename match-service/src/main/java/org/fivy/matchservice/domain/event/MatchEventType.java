@@ -9,5 +9,7 @@ public enum MatchEventType {
     PLAYER_LEFT,
     MATCH_STARTED,
     MATCH_COMPLETED,
-    MATCH_CANCELLED
+    MATCH_CANCELLED,
+    MATCH_SAVED,
+    MATCH_UNSAVED
 }
