@@ -1,6 +1,5 @@
 package org.fivy.userservice.application.service.impl;
 
-import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fivy.userservice.api.dto.UserRequestDTO;
@@ -33,6 +32,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Transactional
 @Slf4j
 public class UserServiceImpl implements UserService {
     private static final String USER_CACHE_KEY_PREFIX = "user:";
@@ -42,7 +42,6 @@ public class UserServiceImpl implements UserService {
     private final KafkaTemplate<String, UserEvent> kafkaTemplate;
     private final RedisTemplate<String, UserResponseDTO> redisTemplate;
 
-    @Transactional
     @Override
     public UserResponseDTO createUserProfile(UserRequestDTO userRequestDTO) {
         String keycloakUserId = userRequestDTO.getKeycloakUserId();
@@ -62,7 +61,6 @@ public class UserServiceImpl implements UserService {
         return response;
     }
 
-    @Transactional
     public UserResponseDTO createUserFromAuthEvent(User userFromEvent) {
         Optional<User> existingUser = userRepository.findByKeycloakUserId(userFromEvent.getKeycloakUserId());
         if (existingUser.isPresent()) {
@@ -80,6 +78,8 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    @CachePut(value = "users", key = "#userId")
     public UserResponseDTO getUserById(UUID userId) {
         String cacheKey = USER_CACHE_KEY_PREFIX + userId;
         UserResponseDTO cachedUser = redisTemplate.opsForValue().get(cacheKey);
@@ -87,14 +87,17 @@ public class UserServiceImpl implements UserService {
             log.debug("Cache hit for user: {}", userId);
             return cachedUser;
         }
-        User user = userRepository.findById(userId).orElseThrow(() -> new EntityNotFoundException("User not found with ID: " + userId));
+        User user = userRepository.findByKeycloakUserId(String.valueOf(userId))
+                .orElseThrow(() -> new UserException(
+                        "User not found",
+                        "USER_NOT_FOUND",
+                        HttpStatus.NOT_FOUND
+                ));
         UserResponseDTO response = userMapper.toUserResponseDTO(user);
         cacheUser(response);
-
         return response;
     }
 
-    @Transactional
     @Override
     @CachePut(value = "users", key = "#userId")
     public ProfileResponse updateProfile(UUID userId, UpdateProfileRequest request) {
@@ -128,7 +131,6 @@ public class UserServiceImpl implements UserService {
         });
     }
 
-    @Transactional
     @Override
     public void deleteUser(UUID userId) {
         userRepository.updateUserStatus(userId, UserStatus.DELETED);
@@ -137,7 +139,12 @@ public class UserServiceImpl implements UserService {
     }
 
     private void cacheUser(UserResponseDTO user) {
-        String cacheKey = USER_CACHE_KEY_PREFIX + user.getId();
-        redisTemplate.opsForValue().set(cacheKey, user, Duration.ofHours(24));
+        try {
+            String cacheKey = USER_CACHE_KEY_PREFIX + user.getId();
+            redisTemplate.opsForValue().set(cacheKey, user, Duration.ofHours(24));
+            log.debug("Successfully cached user: {}", user.getId());
+        } catch (Exception e) {
+            log.warn("Failed to cache user: {}", user.getId(), e);
+        }
     }
 }
