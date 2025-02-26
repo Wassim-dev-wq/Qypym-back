@@ -1,4 +1,4 @@
-package org.fivy.authservice.api.dto;
+package org.fivy.authservice.api.dto.request;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;

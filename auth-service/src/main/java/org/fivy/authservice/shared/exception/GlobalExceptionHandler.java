@@ -1,7 +1,7 @@
 package org.fivy.authservice.shared.exception;
 
 import lombok.extern.slf4j.Slf4j;
-import org.fivy.authservice.api.dto.ApiResponse;
+import org.fivy.authservice.api.dto.response.ApiResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;

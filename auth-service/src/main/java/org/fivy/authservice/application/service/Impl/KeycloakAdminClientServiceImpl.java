@@ -2,15 +2,16 @@ package org.fivy.authservice.application.service.Impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.fivy.authservice.api.dto.LoginRequest;
-import org.fivy.authservice.api.dto.TokenResponse;
-import org.fivy.authservice.api.dto.UserRegistrationRequest;
+import org.fivy.authservice.api.dto.request.LoginRequest;
+import org.fivy.authservice.api.dto.request.UserRegistrationRequest;
+import org.fivy.authservice.api.dto.response.RefreshTokenResponse;
+import org.fivy.authservice.api.dto.response.TokenResponse;
 import org.fivy.authservice.application.service.KeycloakAdminClientService;
 import org.fivy.authservice.domain.enums.AuthEventType;
 import org.fivy.authservice.domain.event.AuthEvent;
 import org.fivy.authservice.infrastructure.client.KeycloakClient;
 import org.fivy.authservice.shared.exception.AuthException;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -29,7 +30,7 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
     private static final long EMAIL_VERIFICATION_TTL = 24;
     private final KeycloakClient keycloakClient;
     private final KafkaTemplate<String, AuthEvent> kafkaTemplate;
-    private final RedisTemplate<String, String> redisTemplate;
+    private final StringRedisTemplate redisTemplate;
 
     @Override
     public String registerUser(UserRegistrationRequest request) {
@@ -174,6 +175,25 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
         return verified;
     }
 
+    @Override
+    public RefreshTokenResponse refreshToken(String refreshToken) {
+        log.info("Processing refresh token request");
+
+        try {
+            RefreshTokenResponse tokenResponse = keycloakClient.refreshToken(refreshToken);
+            return tokenResponse;
+
+        } catch (Exception e) {
+            log.error("Failed to refresh token", e);
+            throw new AuthException(
+                    "Token refresh failed",
+                    "REFRESH_FAILED",
+                    HttpStatus.UNAUTHORIZED,
+                    e
+            );
+        }
+    }
+
     private void publishUserRegisteredEvent(String userId, UserRegistrationRequest request) {
         AuthEvent event = AuthEvent.builder()
                 .type(AuthEventType.USER_REGISTERED)
@@ -194,6 +214,12 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
                         log.error("Failed to publish user registered event for userId: {}", userId, ex);
                     }
                 });
+    }
+
+    @Override
+    public boolean verifyToken(String token) {
+        log.info("Verifying access token");
+        return keycloakClient.verifyToken(token);
     }
 
     private void publishUserLoggedInEvent(String email) {
