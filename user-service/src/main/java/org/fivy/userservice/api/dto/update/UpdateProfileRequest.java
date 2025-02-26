@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.fivy.userservice.domain.enums.PlayerLevel;
 
 @Data
 @Builder
@@ -22,5 +23,5 @@ public class UpdateProfileRequest {
     private Double latitude;
     private Double longitude;
     private Integer preferredDistance;
-    private Integer playerLevel;
+    private PlayerLevel playerLevel;
 }

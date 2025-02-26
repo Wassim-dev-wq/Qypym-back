@@ -3,8 +3,8 @@ package org.fivy.userservice.infrastructure.cache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fivy.userservice.api.dto.UserResponseDTO;
-import org.jvnet.hk2.annotations.Service;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.Optional;
@@ -14,8 +14,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class UserCacheService {
-    private final RedisTemplate<String, UserResponseDTO> redisTemplate;
     private static final String USER_CACHE_PREFIX = "user:";
+    private final RedisTemplate<String, UserResponseDTO> redisTemplate;
 
     public void cacheUser(UserResponseDTO user) {
         String key = USER_CACHE_PREFIX + user.getId();

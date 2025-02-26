@@ -4,8 +4,10 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.fivy.userservice.domain.enums.PlayerLevel;
+import org.fivy.userservice.domain.enums.UserStatus;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Data
 @Builder
@@ -25,8 +27,8 @@ public class ProfileResponse {
     private Double latitude;
     private Double longitude;
     private Integer preferredDistance;
-    private Integer playerLevel;
-    private String status;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
+    private PlayerLevel playerLevel;
+    private UserStatus status;
+    private Instant createdAt;
+    private Instant updatedAt;
 }
