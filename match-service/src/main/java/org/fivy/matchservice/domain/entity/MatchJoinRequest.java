@@ -27,6 +27,26 @@ public class MatchJoinRequest {
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "preferred_team_id")
+    private MatchTeam preferredTeam;
+
+    @Column(length = 500)
+    private String message;
+
+    @Column(length = 50)
+    private String position;
+
+    @Column(length = 20)
+
+    private String experience;
+
+    @Column(length = 200)
+    private String personalNote;
+
+    @Column(name = "is_available", nullable = false)
+    private boolean isAvailable;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "request_status", nullable = false)
     private JoinRequestStatus requestStatus;

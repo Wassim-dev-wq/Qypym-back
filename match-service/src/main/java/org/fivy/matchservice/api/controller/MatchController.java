@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fivy.matchservice.api.dto.request.CreateMatchRequest;
 import org.fivy.matchservice.api.dto.request.UpdateMatchRequest;
+import org.fivy.matchservice.api.dto.response.MatchDetailsResponse;
 import org.fivy.matchservice.api.dto.response.MatchResponse;
 import org.fivy.matchservice.application.service.MatchService;
 import org.fivy.matchservice.domain.enums.MatchStatus;
@@ -47,9 +48,10 @@ public class MatchController {
     ) {
         MDC.put("correlationId", correlationId != null ? correlationId : UUID.randomUUID().toString());
         log.info("Processing match creation request");
-
         try {
             UUID creatorId = UUID.fromString(userId);
+            log.info("Creating match for user: {}", creatorId);
+            log.info("Match request: {}", request);
             MatchResponse match = matchService.createMatch(creatorId, request);
             return org.fivy.matchservice.api.dto.ApiResponse.success(match);
         } finally {
@@ -77,18 +79,54 @@ public class MatchController {
     @GetMapping("/{matchId}")
     @Operation(summary = "Get match details",
             description = "Retrieves details of a specific match")
-    public org.fivy.matchservice.api.dto.ApiResponse<MatchResponse> getMatch(@PathVariable UUID matchId) {
+    public org.fivy.matchservice.api.dto.ApiResponse<MatchResponse> getMatch(
+            @PathVariable UUID matchId,
+            @RequestHeader("X-User-ID") String userId
+    ) {
         log.info("Fetching match: {}", matchId);
-        MatchResponse match = matchService.getMatch(matchId);
+        UUID currentUserId = UUID.fromString(userId);
+        MatchResponse match = matchService.getMatch(matchId, currentUserId);
         return org.fivy.matchservice.api.dto.ApiResponse.success(match);
     }
 
+    @GetMapping("/{matchId}/details")
+    @Operation(summary = "Get match details",
+            description = "Retrieves details of a specific match")
+    public org.fivy.matchservice.api.dto.ApiResponse<MatchDetailsResponse> getMatchDetails(
+            @PathVariable UUID matchId,
+            @RequestHeader("X-User-ID") String userId
+    ) {
+        log.info("Fetching match details : {}", matchId);
+        UUID currentUserId = UUID.fromString(userId);
+        MatchDetailsResponse match = matchService.getMatchWithDetails(matchId, currentUserId);
+        return org.fivy.matchservice.api.dto.ApiResponse.success(match);
+    }
+
+
     @GetMapping
-    @Operation(summary = "Get matches",
-            description = "Retrieves a paginated list of matches")
-    public org.fivy.matchservice.api.dto.ApiResponse<Page<MatchResponse>> getMatches(Pageable pageable) {
-        log.info("Fetching matches page: {}", pageable.getPageNumber());
-        Page<MatchResponse> matches = matchService.getMatches(pageable);
+    @Operation(summary = "Get matches with optional filters",
+            description = "Retrieves a paginated list of matches, optionally filtered by location/distance.")
+    public org.fivy.matchservice.api.dto.ApiResponse<Page<MatchResponse>> getMatches(
+            @RequestParam(required = false) Double latitude,
+            @RequestParam(required = false) Double longitude,
+            @RequestParam(required = false) Double distance,
+            @RequestParam(required = false) String skillLevel,
+            Pageable pageable,
+            @RequestHeader("X-User-ID") String userId
+    ) {
+        log.info("Fetching matches page: {} with lat={}, lon={}, dist={}, skill={}",
+                pageable.getPageNumber(), latitude, longitude, distance, skillLevel);
+        UUID currentUserId = UUID.fromString(userId);
+
+        Page<MatchResponse> matches = matchService.getMatches(
+                latitude,
+                longitude,
+                distance,
+                skillLevel,
+                pageable,
+                currentUserId
+        );
+
         return org.fivy.matchservice.api.dto.ApiResponse.success(matches);
     }
 

@@ -1,47 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.4</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <groupId>org.fivy</groupId>
+        <artifactId>fivy-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <groupId>org.fivy</groupId>
     <artifactId>match-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>match-service</name>
-    <description>match-service</description>
-    <url/>
-
-    <licenses>
-        <license/>
-    </licenses>
-
-    <developers>
-        <developer/>
-    </developers>
-
-    <scm>
-        <connection/>
-        <developerConnection/>
-        <tag/>
-        <url/>
-    </scm>
-
-    <properties>
-        <java.version>17</java.version>
-        <mapstruct.version>1.5.5.Final</mapstruct.version> <!-- Define MapStruct version -->
-    </properties>
+    <description>Match Service for Fivy</description>
 
     <dependencies>
-        <!-- Spring Boot Dependencies -->
+        <!-- Spring Boot Core -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
+            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
         <dependency>
@@ -49,61 +28,43 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- Database -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-devtools</artifactId>
-            <scope>runtime</scope>
-            <optional>true</optional>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
-        <!-- Lombok for Boilerplate Code Reduction -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- ModelMapper  -->
-        <dependency>
-            <groupId>org.modelmapper</groupId>
-            <artifactId>modelmapper</artifactId>
-            <version>3.2.1</version>
-        </dependency>
-
-        <!-- PostgreSQL Driver -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Spring Web -->
+        <!-- Caching with Redis -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- Spring Kafka -->
+        <!-- Service Discovery -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+
+        <!-- Config Client -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-config</artifactId>
+        </dependency>
+
+        <!-- Messaging with Kafka -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
         </dependency>
 
-        <!-- Swagger Annotations -->
-        <dependency>
-            <groupId>io.swagger.core.v3</groupId>
-            <artifactId>swagger-annotations-jakarta</artifactId>
-            <version>2.2.21</version>
-            <scope>compile</scope>
-        </dependency>
-
-        <!-- Spring Security -->
+        <!-- Security -->
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-core</artifactId>
@@ -114,55 +75,49 @@
             <artifactId>spring-security-oauth2-jose</artifactId>
         </dependency>
 
-        <!-- MapStruct Dependencies -->
+        <!-- Object Mapping -->
         <dependency>
             <groupId>org.mapstruct</groupId>
             <artifactId>mapstruct</artifactId>
-            <version>${mapstruct.version}</version>
         </dependency>
 
-        <!-- MapStruct Annotation Processor -->
         <dependency>
             <groupId>org.mapstruct</groupId>
             <artifactId>mapstruct-processor</artifactId>
-            <version>${mapstruct.version}</version>
             <scope>provided</scope>
         </dependency>
+
+        <!-- Optional alternative mapper -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-redis</artifactId>
+            <groupId>org.modelmapper</groupId>
+            <artifactId>modelmapper</artifactId>
+            <version>3.2.1</version>
+        </dependency>
+
+        <!-- Development Tools -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- API Documentation -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
         </dependency>
     </dependencies>
 
     <build>
         <plugins>
             <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
-                <configuration>
-                    <source>${java.version}</source>
-                    <target>${java.version}</target>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                            <version>1.18.36</version>
-                        </path>
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok-mapstruct-binding</artifactId>
-                            <version>0.2.0</version>
-                        </path>
-                        <path>
-                            <groupId>org.mapstruct</groupId>
-                            <artifactId>mapstruct-processor</artifactId>
-                            <version>${mapstruct.version}</version>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
             </plugin>
         </plugins>
     </build>
-
 </project>

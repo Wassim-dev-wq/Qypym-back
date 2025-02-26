@@ -24,6 +24,10 @@ public class MatchPlayer {
     @JoinColumn(name = "match_id", nullable = false)
     private Match match;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "team_id")
+    private MatchTeam team;
+
     @Column(name = "player_id", nullable = false)
     private UUID playerId;
 
