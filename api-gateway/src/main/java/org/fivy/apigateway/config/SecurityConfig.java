@@ -30,10 +30,12 @@ public class SecurityConfig {
                         .pathMatchers(HttpMethod.OPTIONS).permitAll()
                         .pathMatchers("/api/v1/users/**").authenticated()
                         .pathMatchers("/api/v1/matches","/api/v1/matches/**").authenticated()
+                        .pathMatchers("/api/v1/notifications/**").authenticated()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthConverter))
                 )
                 .build();
     }
+
 }

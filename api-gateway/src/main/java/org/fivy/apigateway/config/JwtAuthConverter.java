@@ -11,7 +11,6 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.stereotype.Component;
-import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.util.Collection;
@@ -29,28 +28,6 @@ public class JwtAuthConverter implements Converter<Jwt, Mono<AbstractAuthenticat
     @Value("${keycloak.client-id}")
     private String clientId;
 
-    private void addUserHeaders(ServerWebExchange exchange, Jwt jwt) {
-        if (exchange != null) {
-            String userId = jwt.getSubject();
-            String email = jwt.getClaimAsString("email");
-            String name = jwt.getClaimAsString("name");
-            Map<String, Object> resourceAccess = jwt.getClaim("resource_access");
-            String roles = "";
-            if (resourceAccess != null && resourceAccess.containsKey(clientId)) {
-                Map<String, Object> clientAccess = (Map<String, Object>) resourceAccess.get(clientId);
-                if (clientAccess != null && clientAccess.containsKey("roles")) {
-                    Collection<String> rolesList = (Collection<String>) clientAccess.get("roles");
-                    roles = String.join(",", rolesList);
-                }
-            }
-            exchange.getRequest().mutate()
-                    .header("X-User-ID", userId != null ? userId : "")
-                    .build();
-            logger.debug("Added user headers - UserId: {}, Email: {}, Roles: {}",
-                    userId, email, roles);
-        }
-    }
-
     @Override
     public Mono<AbstractAuthenticationToken> convert(Jwt jwt) {
         logger.info("Starting JWT conversion process");
@@ -62,13 +39,7 @@ public class JwtAuthConverter implements Converter<Jwt, Mono<AbstractAuthenticat
                 extractAllRoles(jwt).stream()
         ).collect(Collectors.toSet());
         logger.info("Final combined authorities: {}", allAuthorities);
-        return Mono.deferContextual(contextView -> {
-            if (contextView.hasKey(ServerWebExchange.class)) {
-                ServerWebExchange exchange = contextView.get(ServerWebExchange.class);
-                addUserHeaders(exchange, jwt);
-            }
-            return Mono.just(new JwtAuthenticationToken(jwt, allAuthorities));
-        });
+        return Mono.just(new JwtAuthenticationToken(jwt, allAuthorities));
     }
 
     private Collection<GrantedAuthority> extractAllRoles(Jwt jwt) {
