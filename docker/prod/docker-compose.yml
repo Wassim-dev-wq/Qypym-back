@@ -1,0 +1,491 @@
+version: '3.8'
+
+services:
+  service-registry:
+    image: wassimben1/service-registry:prod
+    container_name: srv-registry-${ENV}
+    restart: unless-stopped
+    ports:
+      - "${SERVICE_REGISTRY_HOST_PORT}:${SERVICE_REGISTRY_CONTAINER_PORT}"
+    environment:
+      - RABBITMQ_PORT=${RABBITMQ_HOST_PORT}
+      - RABBITMQ_HOST=mq-rabbitmq-${ENV}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - JAVA_TOOL_OPTIONS=${JAVA_MEMORY_OPTS}
+    networks:
+      - qypym-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${SERVICE_REGISTRY_CONTAINER_PORT}/actuator/health"]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${SERVICE_REGISTRY_START_PERIOD:-30s}
+
+  auth-service:
+    image: wassimben1/auth-service:prod
+    container_name: svc-auth-${ENV}
+    restart: unless-stopped
+    ports:
+      - "${AUTH_SERVICE_HOST_PORT}:${AUTH_SERVICE_CONTAINER_PORT}"
+    depends_on:
+      service-registry:
+        condition: service_healthy
+    environment:
+      - SERVER_PORT=${AUTH_SERVICE_CONTAINER_PORT}
+      - KC_REALM=${KC_REALM}
+      - KC_AUTH_URL=${KC_AUTH_URL}
+      - KC_CLIENT_ID=${KC_CLIENT_ID}
+      - KC_CLIENT_SECRET=${KC_CLIENT_SECRET}
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=${EUREKA_DEFAULT_ZONE:-http://service-registry:${SERVICE_REGISTRY_CONTAINER_PORT}/eureka}
+      - SPRING_REDIS_HOST=${REDIS_HOST:-cache-redis-${ENV}}
+      - SPRING_REDIS_PORT=${REDIS_CONTAINER_PORT}
+      - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD}
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-mq-kafka-${ENV}:${KAFKA_INTERNAL_PORT:-29092}}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=${KC_JWT_ISSUER_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=${KC_JWK_SET_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}/protocol/openid-connect/certs}
+      - JAVA_TOOL_OPTIONS=${JAVA_MEMORY_OPTS}
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK=INFO
+    networks:
+      - qypym-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${AUTH_SERVICE_CONTAINER_PORT}/actuator/health" ]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${AUTH_SERVICE_START_PERIOD:-50s}
+
+  api-gateway:
+    image: wassimben1/api-gateway:prod
+    container_name: api-gateway-${ENV}
+    restart: unless-stopped
+    ports:
+      - "${API_GATEWAY_HOST_PORT}:${API_GATEWAY_CONTAINER_PORT}"
+    networks:
+      - qypym-network
+    environment:
+      - SERVICE_REGISTRY_DEFAULTZONE=${EUREKA_DEFAULT_ZONE:-http://service-registry:${SERVICE_REGISTRY_CONTAINER_PORT}/eureka}
+      - SPRING_APPLICATION_NAME=${API_GATEWAY_NAME:-api-gateway}
+      - SERVER_PORT=${API_GATEWAY_CONTAINER_PORT}
+      - SPRING_CONFIG_IMPORT=${CONFIG_SERVER_IMPORT:-optional:configserver:http://config-server:${CONFIG_SERVER_CONTAINER_PORT}}
+      - KEYCLOAK_CLIENT_ID=${KC_CLIENT_ID}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=${KC_JWT_ISSUER_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=${KC_JWK_SET_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}/protocol/openid-connect/certs}
+      - KEYCLOAK_AUTH_SERVER_URL=${KC_AUTH_SERVER_URL:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}}
+      - JAVA_TOOL_OPTIONS=-Xmx200m
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK=INFO
+    depends_on:
+      service-registry:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${API_GATEWAY_CONTAINER_PORT}/actuator/health"]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${API_GATEWAY_START_PERIOD:-40s}
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:22.0.5
+    container_name: auth-keycloak-${ENV}
+    restart: always
+    ports:
+      - "${KEYCLOAK_HOST_PORT}:${KEYCLOAK_CONTAINER_PORT}"
+      - "${KEYCLOAK_HTTPS_HOST_PORT}:${KEYCLOAK_HTTPS_CONTAINER_PORT}"
+    environment:
+      - KC_DB=${KC_DB_TYPE}
+      - KC_DB_URL_HOST=${KC_DB_URL_HOST}
+      - KC_DB_URL_DATABASE=${KC_DB_NAME}
+      - KC_DB_USERNAME=${KC_DB_USERNAME}
+      - KC_DB_PASSWORD=${KC_DB_PASSWORD}
+      - KC_PROXY=edge
+      - KC_HOSTNAME_URL=${KC_HOSTNAME_URL}
+      - KC_HOSTNAME_STRICT_HTTPS=true
+      - KC_HOSTNAME_STRICT_BACKCHANNEL=true
+      - KEYCLOAK_ADMIN=${KC_ADMIN_USER}
+      - KEYCLOAK_ADMIN_PASSWORD=${KC_ADMIN_PASSWORD}
+      - KEYCLOAK_FRONTEND_URL=${KC_FRONTEND_URL}
+      - KC_HEALTH_ENABLED=true
+      - KC_METRICS_ENABLED=${KC_METRICS_ENABLED:-false}
+      - KC_LOG_LEVEL=${KC_LOG_LEVEL:-INFO}
+    volumes:
+      - keycloak_themes:/opt/keycloak/themes/mytheme
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    command:
+      - start
+    networks:
+      - qypym-network
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/${KEYCLOAK_CONTAINER_PORT} && printf \"GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q \"status\":\"UP\"'"]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${KEYCLOAK_START_PERIOD:-60s}
+    deploy:
+      resources:
+        limits:
+          memory: ${KEYCLOAK_MEMORY_LIMIT:-512M}
+
+
+  user-service:
+    image: wassimben1/user-service:prod
+    container_name: svc-user-${ENV}
+    restart: unless-stopped
+    ports:
+      - "${USER_SERVICE_HOST_PORT}:${USER_SERVICE_CONTAINER_PORT}"
+    networks:
+      - qypym-network
+    depends_on:
+      user-service-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    environment:
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}
+      - SERVER_PORT=${USER_SERVICE_CONTAINER_PORT}
+      - USER_DB_HOST=${USER_DB_HOST:-db-user-${ENV}}
+      - USER_DB_PORT=${USER_DB_CONTAINER_PORT}
+      - POSTGRES_DB=${USER_DB_NAME}
+      - POSTGRES_USER=${USER_DB_USERNAME}
+      - POSTGRES_PASSWORD=${USER_DB_PASSWORD}
+      - SPRING_REDIS_HOST=${REDIS_HOST:-cache-redis-${ENV}}
+      - REDIS_CONTAINER_PORT=${REDIS_CONTAINER_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KEYCLOAK_CLIENT_ID=${KC_CLIENT_ID}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=${KC_JWT_ISSUER_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=${KC_JWK_SET_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}/protocol/openid-connect/certs}
+      - KEYCLOAK_AUTH_SERVER_URL=${KC_AUTH_SERVER_URL:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}}
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-mq-kafka-${ENV}:${KAFKA_INTERNAL_PORT:-29092}}
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=${EUREKA_DEFAULT_ZONE:-http://service-registry:${SERVICE_REGISTRY_CONTAINER_PORT}/eureka}
+      - JAVA_TOOL_OPTIONS=-Xmx200m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${USER_SERVICE_CONTAINER_PORT}/actuator/health" ]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${USER_SERVICE_START_PERIOD:-40s}
+
+  match-service:
+    image: wassimben1/match-service:prod
+    container_name: svc-match-${ENV}
+    restart: unless-stopped
+    ports:
+      - "${MATCH_SERVICE_HOST_PORT}:${MATCH_SERVICE_CONTAINER_PORT}"
+    networks:
+      - qypym-network
+    depends_on:
+      match-service-db:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    environment:
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}
+      - SERVER_PORT=${MATCH_SERVICE_CONTAINER_PORT}
+      - MATCH_DB_HOST=${MATCH_DB_HOST:-db-match-${ENV}}
+      - MATCH_DB_PORT=${MATCH_DB_CONTAINER_PORT}
+      - POSTGRES_DB=${MATCH_DB_NAME}
+      - POSTGRES_USER=${MATCH_DB_USERNAME}
+      - POSTGRES_PASSWORD=${MATCH_DB_PASSWORD}
+      - SPRING_REDIS_HOST=${REDIS_HOST:-cache-redis-${ENV}}
+      - SPRING_REDIS_PORT=${REDIS_CONTAINER_PORT}
+      - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD}
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-mq-kafka-${ENV}:${KAFKA_INTERNAL_PORT:-29092}}
+      - SPRING_KAFKA_CONSUMER_GROUP_ID=match-service
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=${EUREKA_DEFAULT_ZONE:-http://service-registry:${SERVICE_REGISTRY_CONTAINER_PORT}/eureka}
+      - KEYCLOAK_CLIENT_ID=${KC_CLIENT_ID}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=${KC_JWT_ISSUER_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=${KC_JWK_SET_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}/protocol/openid-connect/certs}
+      - KEYCLOAK_AUTH_SERVER_URL=${KC_AUTH_SERVER_URL:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}}
+      - JAVA_TOOL_OPTIONS=-Xmx200m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${MATCH_SERVICE_CONTAINER_PORT}/actuator/health" ]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${MATCH_SERVICE_START_PERIOD:-40s}
+
+  notification-service:
+    image: wassimben1/notification-service:prod
+    container_name: svc-notification-${ENV}
+    restart: unless-stopped
+    ports:
+      - "${NOTIF_SERVICE_HOST_PORT}:${NOTIF_SERVICE_CONTAINER_PORT}"
+    networks:
+      - qypym-network
+    depends_on:
+      notification-service-db:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    environment:
+      - FIREBASE_SERVICE_ACCOUNT_PATH=${FIREBASE_SERVICE_ACCOUNT_PATH}
+      - NOTIF_MAIL_HOST=${NOTIF_MAIL_HOST}
+      - NOTIF_MAIL_PORT=${NOTIF_MAIL_PORT}
+      - NOTIF_MAIL_USERNAME=${NOTIF_MAIL_USERNAME}
+      - NOTIF_MAIL_PASSWORD=${NOTIF_MAIL_PASSWORD}
+      - NOTIF_SERVICE_PORT=${NOTIF_SERVICE_SERVER_PORT}
+      - NOTIF_DB_HOST=${NOTIF_DB_HOST:-db-notification-${ENV}}
+      - NOTIF_DB_PORT=${NOTIF_DB_CONTAINER_PORT}
+      - NOTIF_POSTGRES_DB=${NOTIF_DB_NAME}
+      - REDIS_HOST=${REDIS_HOST:-cache-redis-${ENV}}
+      - REDIS_HOST_PORT=${REDIS_CONTAINER_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - POSTGRES_USER=${NOTIF_DB_USERNAME}
+      - POSTGRES_PASSWORD=${NOTIF_DB_PASSWORD}
+      - KEYCLOAK_CLIENT_ID=${KC_CLIENT_ID}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=${KC_JWT_ISSUER_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=${KC_JWK_SET_URI:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}/realms/${KC_REALM}/protocol/openid-connect/certs}
+      - KEYCLOAK_AUTH_SERVER_URL=${KC_AUTH_SERVER_URL:-http://keycloak:${KEYCLOAK_CONTAINER_PORT}}
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=${EUREKA_DEFAULT_ZONE:-http://service-registry:${SERVICE_REGISTRY_CONTAINER_PORT}/eureka}
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-mq-kafka-${ENV}:${KAFKA_INTERNAL_PORT:-29092}}
+      - SPRING_KAFKA_CONSUMER_GROUP_ID=notification-service
+      - JAVA_TOOL_OPTIONS=-Xmx200m
+    volumes:
+      - ${FIREBASE_SERVICE_ACCOUNT_HOST_PATH}:${FIREBASE_SERVICE_ACCOUNT_PATH}:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${NOTIF_SERVICE_CONTAINER_PORT}/actuator/health" ]
+      interval: ${HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+      start_period: ${NOTIFICATION_SERVICE_START_PERIOD:-40s}
+
+  notification-service-db:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: db-notification-${ENV}
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${NOTIF_DB_NAME}
+      - POSTGRES_USER=${NOTIF_DB_USERNAME}
+      - POSTGRES_PASSWORD=${NOTIF_DB_PASSWORD}
+      - POSTGRES_HOST_AUTH_METHOD=${POSTGRES_HOST_AUTH_METHOD:-scram-sha-256}
+    volumes:
+      - notification_service_data:/var/lib/postgresql/data
+    networks:
+      - qypym-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NOTIF_DB_USERNAME} -d ${NOTIF_DB_NAME}"]
+      interval: ${DB_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${DB_HEALTHCHECK_TIMEOUT:-5s}
+      retries: 3
+      start_period: ${DB_START_PERIOD:-30s}
+
+  user-service-db:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: db-user-${ENV}
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${USER_DB_NAME}
+      - POSTGRES_USER=${USER_DB_USERNAME}
+      - POSTGRES_PASSWORD=${USER_DB_PASSWORD}
+      - POSTGRES_HOST_AUTH_METHOD=${POSTGRES_HOST_AUTH_METHOD:-scram-sha-256}
+    volumes:
+      - user_service_data:/var/lib/postgresql/data
+    networks:
+      - qypym-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USERNAME} -d ${USER_DB_NAME}"]
+      interval: ${DB_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${DB_HEALTHCHECK_TIMEOUT:-5s}
+      retries: 3
+      start_period: ${DB_START_PERIOD:-30s}
+
+  keycloak-db:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: auth-keycloak-db-${ENV}
+    restart: unless-stopped
+    ports:
+      - "${KC_DB_HOST_PORT}:${KC_DB_CONTAINER_PORT}"
+    volumes:
+      - keycloak_db_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${KC_DB_USERNAME}
+      - POSTGRES_PASSWORD=${KC_DB_PASSWORD}
+      - POSTGRES_DB=${KC_DB_NAME}
+      - POSTGRES_HOST_AUTH_METHOD=${POSTGRES_HOST_AUTH_METHOD}
+    networks:
+      - qypym-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KC_DB_USERNAME}"]
+      interval: ${DB_HEALTHCHECK_INTERVAL}
+      timeout: ${DB_HEALTHCHECK_TIMEOUT}
+      retries: 3
+      start_period: ${DB_START_PERIOD}
+
+  match-service-db:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: db-match-${ENV}
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${MATCH_DB_NAME}
+      - POSTGRES_USER=${MATCH_DB_USERNAME}
+      - POSTGRES_PASSWORD=${MATCH_DB_PASSWORD}
+      - POSTGRES_HOST_AUTH_METHOD=${POSTGRES_HOST_AUTH_METHOD:-scram-sha-256}
+    volumes:
+      - match_service_data:/var/lib/postgresql/data
+    networks:
+      - qypym-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MATCH_DB_USERNAME} -d ${MATCH_DB_NAME}"]
+      interval: ${DB_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${DB_HEALTHCHECK_TIMEOUT:-5s}
+      retries: 3
+      start_period: ${DB_START_PERIOD:-30s}
+
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    container_name: cache-redis-${ENV}
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - qypym-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: ${REDIS_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${REDIS_HEALTHCHECK_TIMEOUT:-5s}
+      retries: 3
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:${CONFLUENT_VERSION:-latest}
+    container_name: mq-zookeeper-${ENV}
+    restart: unless-stopped
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=${ZOOKEEPER_CONTAINER_PORT}
+      - ZOOKEEPER_TICK_TIME=${ZOOKEEPER_TICK_TIME:-2000}
+    networks:
+      - qypym-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "${ZOOKEEPER_CONTAINER_PORT}"]
+      interval: ${ZK_HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${ZK_HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+
+  kafka:
+    image: confluentinc/cp-kafka:${CONFLUENT_VERSION:-latest}
+    container_name: mq-kafka-${ENV}
+    restart: unless-stopped
+    environment:
+      - KAFKA_BROKER_ID=${KAFKA_BROKER_ID:-1}
+      - KAFKA_ZOOKEEPER_CONNECT=mq-zookeeper-${ENV}:${ZOOKEEPER_CONTAINER_PORT}
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=${KAFKA_PROTOCOL_MAP:-PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT}
+      - KAFKA_ADVERTISED_LISTENERS=${KAFKA_ADV_LISTENERS:-PLAINTEXT://mq-kafka-${ENV}:${KAFKA_INTERNAL_PORT:-29092},PLAINTEXT_HOST://localhost:${KAFKA_HOST_PORT}}
+      - KAFKA_LISTENERS=${KAFKA_LISTENERS:-PLAINTEXT://0.0.0.0:${KAFKA_INTERNAL_PORT:-29092},PLAINTEXT_HOST://0.0.0.0:${KAFKA_CONTAINER_PORT}}
+      - KAFKA_INTER_BROKER_LISTENER_NAME=${KAFKA_INTER_BROKER_LISTENER:-PLAINTEXT}
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=${KAFKA_REPLICATION_FACTOR:-1}
+      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=${KAFKA_REBALANCE_DELAY:-0}
+      - KAFKA_NUM_PARTITIONS=${KAFKA_NUM_PARTITIONS:-3}
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - qypym-network
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:${KAFKA_CONTAINER_PORT}", "--list"]
+      interval: ${KAFKA_HEALTHCHECK_INTERVAL:-30s}
+      timeout: ${KAFKA_HEALTHCHECK_TIMEOUT:-10s}
+      retries: 3
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: mq-rabbitmq-${ENV}
+    restart: unless-stopped
+    ports:
+      - "${RABBITMQ_HOST_PORT}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT}:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-rabbitmq_admin}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-R4bb1t@PRD-2pZ8}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - qypym-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  qypym-network:
+    name: qypym-network-${ENV}
+    driver: bridge
+
+volumes:
+  user_service_data:
+    name: user-data-${ENV}
+  match_service_data:
+    name: match-data-${ENV}
+  notification_service_data:
+    name: notification-data-${ENV}
+  keycloak_db_data:
+    name: keycloak-data-${ENV}
+  kafka_data:
+    name: kafka-data-${ENV}
+  redis_data:
+    name: redis-data-${ENV}
+  rabbitmq_data:
+    name: rabbitmq-data-${ENV}
+  keycloak_themes:
+    name: keycloak-themes-${ENV}
