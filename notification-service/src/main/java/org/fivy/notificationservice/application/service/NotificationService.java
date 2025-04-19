@@ -1,5 +1,6 @@
 package org.fivy.notificationservice.application.service;
 
+import org.fivy.notificationservice.api.dto.request.SupportRequestDto;
 import org.fivy.notificationservice.api.dto.response.NotificationResponse;
 import org.fivy.notificationservice.domain.enums.NotificationType;
 import org.springframework.data.domain.Page;
@@ -16,6 +17,9 @@ public interface NotificationService {
     @Transactional
     void sendPushNotification(String expoPushToken, String title, String message);
 
+    @Transactional
+    void sendPushNotification(UUID userId, String expoPushToken, String title, String message);
+
     Page<NotificationResponse> getNotifications(UUID userId, Pageable pageable);
 
     long getUnreadCount(UUID userId);
@@ -23,4 +27,6 @@ public interface NotificationService {
     NotificationResponse markAsRead(UUID notificationId, UUID userId);
 
     void markAllAsRead(UUID userId);
+
+    void sendSupportEmail(SupportRequestDto request);
 }

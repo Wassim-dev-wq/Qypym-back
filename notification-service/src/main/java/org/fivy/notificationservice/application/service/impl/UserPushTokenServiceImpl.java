@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fivy.notificationservice.api.dto.request.UserPushTokenRequest;
 import org.fivy.notificationservice.api.dto.response.UserPushTokenResponse;
+import org.fivy.notificationservice.application.service.UserNotificationPreferencesService;
 import org.fivy.notificationservice.application.service.UserPushTokenService;
 import org.fivy.notificationservice.domain.entity.UserPushToken;
 import org.fivy.notificationservice.domain.repository.UserPushTokenRepository;
@@ -20,6 +21,7 @@ import java.util.stream.Collectors;
 public class UserPushTokenServiceImpl implements UserPushTokenService {
 
     private final UserPushTokenRepository userPushTokenRepository;
+    private final UserNotificationPreferencesService userNotificationPreferencesService;
 
     @Override
     @Transactional
@@ -31,6 +33,7 @@ public class UserPushTokenServiceImpl implements UserPushTokenService {
                     .expoToken(request.getExpoToken())
                     .build();
             UserPushToken saved = userPushTokenRepository.save(newToken);
+            initializeNotificationPreferences(request.getUserId());
             log.info("Registered new push token for user {}: {}", request.getUserId(), request.getExpoToken());
             return mapToDto(saved);
         } else {
@@ -53,6 +56,15 @@ public class UserPushTokenServiceImpl implements UserPushTokenService {
         return tokens.stream()
                 .map(this::mapToDto)
                 .collect(Collectors.toList());
+    }
+
+    private void initializeNotificationPreferences(UUID userId) {
+        try {
+            userNotificationPreferencesService.getPreferences(userId);
+            log.info("Initialized notification preferences for user: {}", userId);
+        } catch (Exception e) {
+            log.error("Error initializing notification preferences for user {}: {}", userId, e.getMessage(), e);
+        }
     }
 
     private UserPushTokenResponse mapToDto(UserPushToken token) {
