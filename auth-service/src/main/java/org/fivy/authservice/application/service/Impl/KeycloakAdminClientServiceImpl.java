@@ -5,11 +5,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.fivy.authservice.api.dto.request.LoginRequest;
 import org.fivy.authservice.api.dto.request.UserRegistrationRequest;
 import org.fivy.authservice.api.dto.response.RefreshTokenResponse;
+import org.fivy.authservice.api.dto.response.RegistrationResponse;
 import org.fivy.authservice.api.dto.response.TokenResponse;
 import org.fivy.authservice.application.service.KeycloakAdminClientService;
 import org.fivy.authservice.domain.enums.AuthEventType;
 import org.fivy.authservice.domain.event.AuthEvent;
+import org.fivy.authservice.domain.event.EmailVerificationEvent;
+import org.fivy.authservice.domain.event.PasswordResetEvent;
 import org.fivy.authservice.infrastructure.client.KeycloakClient;
+import org.fivy.authservice.infrastructure.config.KafkaConfig;
 import org.fivy.authservice.shared.exception.AuthException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
@@ -17,7 +21,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.security.SecureRandom;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -26,46 +30,31 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Transactional
 public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientService {
-    private static final String EMAIL_VERIFICATION_CACHE_PREFIX = "email_verification:";
-    private static final long EMAIL_VERIFICATION_TTL = 24;
+    private static final String EMAIL_VERIFICATION_CODE_PREFIX = "email_verification_code:";
+    private static final String PASSWORD_RESET_CODE_PREFIX = "password_reset_code:";
+    private static final int CODE_EXPIRATION_MINUTES = 3;
+
     private final KeycloakClient keycloakClient;
     private final KafkaTemplate<String, AuthEvent> kafkaTemplate;
+    private final KafkaTemplate<String, Object> genericKafkaTemplate;
     private final StringRedisTemplate redisTemplate;
+    private final KafkaTemplate<String, EmailVerificationEvent> kafkaTemplateEmail;
+    private final KafkaTemplate<String, PasswordResetEvent> kafkaTemplatePasswordReset;
+    private final SecureRandom random = new SecureRandom();
 
     @Override
-    public String registerUser(UserRegistrationRequest request) {
+    public RegistrationResponse registerUser(UserRegistrationRequest request) {
         log.info("Starting user registration process for email: {}", request.getEmail());
-
         validateUniqueEmail(request.getEmail());
-
         String userId = keycloakClient.createUser(request);
-
         try {
-            AuthEvent event = AuthEvent.builder()
-                    .userId(userId)
-                    .type(AuthEventType.USER_REGISTERED)
-                    .data(Map.of(
-                            "email", request.getEmail(),
-                            "username", request.getUsername(),
-                            "firstName", request.getFirstName(),
-                            "lastName", request.getLastName()
-                    ))
-                    .timestamp(LocalDateTime.now())
-                    .build();
-
-            kafkaTemplate.send("auth-events", userId, event)
-                    .whenComplete((result, ex) -> {
-                        if (ex == null) {
-                            log.debug("Published user registered event for userId: {}", userId);
-                        } else {
-                            log.error("Failed to publish user registered event for userId: {}", userId, ex);
-                        }
-                    });
-            keycloakClient.sendVerificationEmail(userId);
-            cacheEmailVerificationStatus(userId, false);
+            String verificationCode = generateAndCacheVerificationCode(EMAIL_VERIFICATION_CODE_PREFIX, userId);
             publishUserRegisteredEvent(userId, request);
+            publishVerificationCodeEvent(userId, request.getEmail(), verificationCode);
             log.info("User registration completed successfully for userId: {}", userId);
-            return userId;
+            return RegistrationResponse.builder()
+                    .userId(userId)
+                    .build();
         } catch (Exception e) {
             log.error("Error during post-registration process for userId: {}", userId, e);
             attemptUserDeletion(userId);
@@ -76,6 +65,167 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
                     e
             );
         }
+    }
+
+    @Override
+    public boolean verifyResetCode(String code, String userId) {
+        log.info("Verifying password reset code for userId: {}", userId);
+        String cacheKey = PASSWORD_RESET_CODE_PREFIX + userId;
+        String cachedCode = redisTemplate.opsForValue().get(cacheKey);
+        boolean isValid = code != null && code.equals(cachedCode);
+        if (isValid) {
+            redisTemplate.expire(cacheKey, 10, TimeUnit.MINUTES);
+            log.info("Password reset code validated successfully for userId: {}", userId);
+        } else {
+            log.warn("Invalid password reset code provided for userId: {}", userId);
+        }
+
+        return isValid;
+    }
+
+    private String generateAndCacheVerificationCode(String verificationPrefix, String userId) {
+        String verificationCode = String.format("%06d", random.nextInt(1000000));
+        String cacheKey = verificationPrefix + userId;
+        redisTemplate.opsForValue().set(cacheKey, verificationCode, CODE_EXPIRATION_MINUTES, TimeUnit.MINUTES);
+        log.info("Generated verification code for userId: {}", userId);
+        return verificationCode;
+    }
+
+    private void publishVerificationCodeEvent(String userId, String email, String verificationCode) {
+        EmailVerificationEvent event = EmailVerificationEvent.builder()
+                .email(email)
+                .verificationCode(verificationCode)
+                .verificationCodeTtl(CODE_EXPIRATION_MINUTES)
+                .build();
+        kafkaTemplateEmail.send(KafkaConfig.TOPIC_EMAIL_VERIFICATION, userId, event)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.debug("Published verification code event for userId: {}", userId);
+                    } else {
+                        log.error("Failed to publish verification code event for userId: {}", userId, ex);
+                    }
+                });
+    }
+
+    private void publishUserRegisteredEvent(String userId, UserRegistrationRequest request) {
+        AuthEvent event = AuthEvent.builder()
+                .type(AuthEventType.USER_REGISTERED)
+                .userId(userId)
+                .data(Map.of(
+                        "email", request.getEmail(),
+                        "firstName", request.getFirstName(),
+                        "lastName", request.getLastName()
+                ))
+                .build();
+        publishEvent("auth-events", event, userId);
+    }
+
+    @Override
+    public void resetPassword(String userId, String code, String newPassword) {
+        log.info("Processing password reset for userId: {}", userId);
+        if(!verifyResetCode(code, userId)) {
+            throw new AuthException(
+                    "Invalid or expired reset code",
+                    "INVALID_CODE",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        try {
+            keycloakClient.resetPassword(userId, newPassword);
+            String cacheKey = PASSWORD_RESET_CODE_PREFIX + userId;
+            redisTemplate.delete(cacheKey);
+            log.info("Password reset completed successfully for userId: {}", userId);
+        } catch (Exception e) {
+            log.error("Password reset failed for userId: {}", userId, e);
+            throw new AuthException(
+                    "Failed to reset password",
+                    "RESET_FAILED",
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    e
+            );
+        }
+    }
+
+    @Override
+    public void deleteAccount(String userId) {
+        log.info("Processing account deletion for userId: {}", userId);
+        try {
+            String email = keycloakClient.getEmailByUserId(userId);
+            publishAccountDeletionEvent(userId, email);
+            keycloakClient.deleteUser(userId);
+            log.info("User account deleted successfully for userId: {}", userId);
+        } catch (AuthException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Account deletion failed for userId: {}", userId, e);
+            throw new AuthException(
+                    "Failed to delete account",
+                    "DELETE_FAILED",
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    e
+            );
+        }
+    }
+
+    private void publishAccountDeletionEvent(String userId, String email) {
+        AuthEvent event = AuthEvent.builder()
+                .type(AuthEventType.USER_DELETED)
+                .userId(userId)
+                .data(Map.of(
+                        "email", email,
+                        "deletedAt", System.currentTimeMillis()
+                ))
+                .build();
+        kafkaTemplate.send(KafkaConfig.TOPIC_AUTH_EVENTS, userId, event)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.info("Published account deletion event for userId: {}", userId);
+                    } else {
+                        log.error("Failed to publish account deletion event for userId: {}", userId, ex);
+                    }
+                });
+    }
+
+    @Override
+    public boolean validateTokenBelongsToUser(String token, String userId) {
+        try {
+            if (!keycloakClient.verifyToken(token)) {
+                return false;
+            }
+            String tokenUserId = keycloakClient.getUserIdFromToken(token);
+            return userId.equals(tokenUserId);
+        } catch (Exception e) {
+            log.error("Error validating token ownership", e);
+            return false;
+        }
+    }
+
+    private void publishEvent(String topic, Object event, String key) {
+        genericKafkaTemplate.send(topic, key, event)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.debug("Published event to topic {} with key {}", topic, key);
+                    } else {
+                        log.error("Failed to publish event to topic {} with key {}", topic, key, ex);
+                    }
+                });
+    }
+
+    private void publishPasswordResetInitiatedEvent(String userId, String email, String resetCode) {
+        PasswordResetEvent event = PasswordResetEvent.builder()
+                .email(email)
+                .resetCode(resetCode)
+                .resetCodeTtl(CODE_EXPIRATION_MINUTES)
+                .build();
+        kafkaTemplatePasswordReset.send(KafkaConfig.TOPIC_PASSWORD_RESET, userId, event)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.debug("Published password reset event for userId: {}", userId);
+                    } else {
+                        log.error("Failed to publish password reset event for userId: {}", userId, ex);
+                    }
+                });
     }
 
     @Override
@@ -114,33 +264,6 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
         }
     }
 
-    @Override
-    public void resetPassword(String userId, String newPassword) {
-
-    }
-
-    @Override
-    public void forgotPassword(String userEmail) {
-
-    }
-
-    @Override
-    public void resendVerificationEmail(String userId) {
-        log.info("Resending verification email for userId: {}", userId);
-
-        try {
-            keycloakClient.sendVerificationEmail(userId);
-        } catch (Exception e) {
-            log.error("Failed to resend verification email for userId: {}", userId, e);
-            throw new AuthException(
-                    "Failed to resend verification email",
-                    "EMAIL_RESEND_FAILED",
-                    HttpStatus.INTERNAL_SERVER_ERROR,
-                    e
-            );
-        }
-    }
-
     private void validateUniqueEmail(String email) {
         if (keycloakClient.emailExists(email)) {
             throw new AuthException(
@@ -151,27 +274,9 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
         }
     }
 
-    private void cacheEmailVerificationStatus(String userId, boolean verified) {
-        String cacheKey = EMAIL_VERIFICATION_CACHE_PREFIX + userId;
-        redisTemplate.opsForValue().set(
-                cacheKey,
-                String.valueOf(verified),
-                EMAIL_VERIFICATION_TTL,
-                TimeUnit.HOURS
-        );
-    }
-
     public boolean isEmailVerified(String email) {
         String userId = keycloakClient.getUserIdByEmail(email);
-        String cacheKey = EMAIL_VERIFICATION_CACHE_PREFIX + userId;
-
-        String cachedStatus = redisTemplate.opsForValue().get(cacheKey);
-        if (cachedStatus != null) {
-            return Boolean.parseBoolean(cachedStatus);
-        }
-
         boolean verified = keycloakClient.isEmailVerified(userId);
-        cacheEmailVerificationStatus(userId, verified);
         return verified;
     }
 
@@ -192,28 +297,6 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
                     e
             );
         }
-    }
-
-    private void publishUserRegisteredEvent(String userId, UserRegistrationRequest request) {
-        AuthEvent event = AuthEvent.builder()
-                .type(AuthEventType.USER_REGISTERED)
-                .userId(userId)
-                .data(Map.of(
-                        "email", request.getEmail(),
-                        "username", request.getUsername(),
-                        "firstName", request.getFirstName(),
-                        "lastName", request.getLastName()
-                ))
-                .build();
-
-        kafkaTemplate.send("auth-events", userId, event)
-                .whenComplete((result, ex) -> {
-                    if (ex == null) {
-                        log.debug("Published user registered event for userId: {}", userId);
-                    } else {
-                        log.error("Failed to publish user registered event for userId: {}", userId, ex);
-                    }
-                });
     }
 
     @Override
@@ -256,14 +339,20 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
     }
 
     @Override
-    public void verifyEmail(String token) {
-        log.info("Processing email verification with token");
+    public void verifyEmail(String code, String userId) {
+        log.info("Processing email verification with code for userId: {}", userId);
         try {
-            String userId = keycloakClient.validateEmailToken(token);
+            if (!verifyEmailCode(userId, code)) {
+                throw new AuthException(
+                        "Invalid or expired verification code",
+                        "INVALID_CODE",
+                        HttpStatus.BAD_REQUEST
+                );
+            }
             keycloakClient.updateEmailVerificationStatus(userId, true);
-            cacheEmailVerificationStatus(userId, true);
-            publishEmailVerifiedEvent(userId);
-
+            log.info("Email verified successfully for userId: {}", userId);
+        } catch (AuthException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Email verification failed", e);
             throw new AuthException(
@@ -275,8 +364,22 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
         }
     }
 
+    private boolean verifyEmailCode(String userId, String code) {
+        String cacheKey = EMAIL_VERIFICATION_CODE_PREFIX + userId;
+        String cachedCode = redisTemplate.opsForValue().get(cacheKey);
+        boolean isValid = code != null && code.equals(cachedCode);
+        if (isValid) {
+            redisTemplate.delete(cacheKey);
+            log.info("Email verification code validated successfully for userId: {}", userId);
+        } else {
+            log.warn("Invalid verification code provided for userId: {}", userId);
+        }
+
+        return isValid;
+    }
+
     @Override
-    public void initiatePasswordReset(String email) {
+    public String initiatePasswordReset(String email) {
         log.info("Initiating password reset for email: {}", email);
         try {
             String userId = keycloakClient.getUserIdByEmail(email);
@@ -287,9 +390,10 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
                         HttpStatus.NOT_FOUND
                 );
             }
-            keycloakClient.sendPasswordResetEmail(userId);
-            publishPasswordResetInitiatedEvent(userId, email);
-
+            String resetCode = generateAndCacheVerificationCode(PASSWORD_RESET_CODE_PREFIX, userId);
+            publishPasswordResetInitiatedEvent(userId, email, resetCode);
+            log.info("Password reset initiated successfully for userId: {}", userId);
+            return userId;
         } catch (AuthException e) {
             throw e;
         } catch (Exception e) {
@@ -301,24 +405,5 @@ public class KeycloakAdminClientServiceImpl implements KeycloakAdminClientServic
                     e
             );
         }
-    }
-
-    private void publishEmailVerifiedEvent(String userId) {
-        AuthEvent event = AuthEvent.builder()
-                .type(AuthEventType.EMAIL_VERIFIED)
-                .userId(userId)
-                .build();
-
-        kafkaTemplate.send("auth-events", userId, event);
-    }
-
-    private void publishPasswordResetInitiatedEvent(String userId, String email) {
-        AuthEvent event = AuthEvent.builder()
-                .type(AuthEventType.PASSWORD_RESET_REQUESTED)
-                .userId(userId)
-                .data(Map.of("email", email))
-                .build();
-
-        kafkaTemplate.send("auth-events", userId, event);
     }
 }

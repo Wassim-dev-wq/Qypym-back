@@ -42,10 +42,24 @@ public class KeycloakClient {
         }
     }
 
+    public void resetPassword(String userId, String newPassword) {
+        try {
+            CredentialRepresentation passwordCred = new CredentialRepresentation();
+            passwordCred.setType(CredentialRepresentation.PASSWORD);
+            passwordCred.setValue(newPassword);
+            passwordCred.setTemporary(false);
+
+            keycloak.realm(properties.getRealm()).users().get(userId).resetPassword(passwordCred);
+            log.info("Password reset successfully for userId: {}", userId);
+        } catch (Exception e) {
+            log.error("Error resetting password", e);
+            throw new AuthException("Error resetting password", "PASSWORD_RESET_ERROR",
+                    HttpStatus.INTERNAL_SERVER_ERROR, e);
+        }
+    }
     public String getUserIdByEmail(String email) {
         try {
             List<UserRepresentation> users = keycloak.realm(properties.getRealm()).users().searchByEmail(email, true);
-
             if (users.isEmpty()) {
                 throw new AuthException("User not found", "USER_NOT_FOUND", HttpStatus.NOT_FOUND);
             }
@@ -55,6 +69,37 @@ public class KeycloakClient {
         } catch (Exception e) {
             log.error("Error getting user ID by email", e);
             throw new AuthException("Error getting user details", "KEYCLOAK_ERROR", HttpStatus.INTERNAL_SERVER_ERROR, e);
+        }
+    }
+
+    public String getUserIdFromToken(String bearerToken) {
+        try {
+            if (!bearerToken.startsWith("Bearer ")) {
+                throw new AuthException("Invalid token format", "INVALID_TOKEN_FORMAT", HttpStatus.UNAUTHORIZED);
+            }
+            String token = bearerToken.substring(7);
+            MultiValueMap<String, String> parameters = new LinkedMultiValueMap<>();
+            parameters.add("token", token);
+            parameters.add("client_id", properties.getClientId());
+            parameters.add("client_secret", properties.getClientSecret());
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+            HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<>(parameters, headers);
+            String introspectionUrl = String.format("%s/realms/%s/protocol/openid-connect/token/introspect",
+                    properties.getAuthServerUrl(), properties.getRealm());
+
+            ResponseEntity<Map> response = keycloakRestTemplate.postForEntity(
+                    introspectionUrl, requestEntity, Map.class);
+
+            if (response.getBody() != null && response.getBody().containsKey("sub")) {
+                return (String) response.getBody().get("sub");
+            }
+
+            throw new AuthException("Could not extract user ID from token", "INVALID_TOKEN", HttpStatus.UNAUTHORIZED);
+        } catch (Exception e) {
+            log.error("Error extracting user ID from token", e);
+            throw new AuthException("Token validation failed", "TOKEN_VALIDATION_FAILED",
+                    HttpStatus.UNAUTHORIZED, e);
         }
     }
 
@@ -77,6 +122,15 @@ public class KeycloakClient {
         }
     }
 
+    public String getEmailByUserId(String userId) {
+        try {
+            UserRepresentation user = keycloak.realm(properties.getRealm()).users().get(userId).toRepresentation();
+            return user.getEmail();
+        } catch (Exception e) {
+            log.error("Error getting email by user ID", e);
+            throw new AuthException("Error getting email", "KEYCLOAK_ERROR", HttpStatus.INTERNAL_SERVER_ERROR, e);
+        }
+    }
     public void logout(String userId, String refreshToken) {
         try {
             keycloak.realm(properties.getRealm()).users().get(userId).logout();
@@ -125,7 +179,6 @@ public class KeycloakClient {
     public String createUser(UserRegistrationRequest request) {
         try {
             UserRepresentation user = new UserRepresentation();
-            user.setUsername(request.getUsername());
             user.setEmail(request.getEmail());
             user.setFirstName(request.getFirstName());
             user.setLastName(request.getLastName());
