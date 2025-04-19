@@ -12,20 +12,16 @@ import java.util.UUID;
 @Repository
 public interface MatchJoinRequestRepository extends JpaRepository<MatchJoinRequest, UUID> {
 
-    boolean existsByMatchIdAndUserIdAndRequestStatusIn(
-            UUID matchId,
-            UUID userId,
-            List<JoinRequestStatus> statuses
-    );
-
-    long countByMatchIdAndRequestStatus(UUID matchId, JoinRequestStatus status);
 
     Optional<MatchJoinRequest> findByMatchIdAndUserId(UUID matchId, UUID userId);
 
     List<MatchJoinRequest> findAllByMatchId(UUID matchId);
 
-    int countByMatchId(UUID matchId);
-
     int countByMatchIdAndRequestStatusNotIn(UUID matchId, List<JoinRequestStatus> statuses);
 
+    List<MatchJoinRequest> findAllByUserId(UUID userId);
+
+    Optional<MatchJoinRequest> findById(UUID requestId);
+
+    void deleteByMatchId(UUID matchId);
 }

@@ -3,21 +3,19 @@ package org.fivy.matchservice.application.service.impl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fivy.matchservice.api.dto.request.CreateMatchRequest;
+import org.fivy.matchservice.api.dto.request.FilterMatchesRequest;
 import org.fivy.matchservice.api.dto.request.UpdateMatchRequest;
 import org.fivy.matchservice.api.dto.response.MatchDetailsResponse;
+import org.fivy.matchservice.api.dto.response.MatchHistoryResponse;
 import org.fivy.matchservice.api.dto.response.MatchResponse;
 import org.fivy.matchservice.api.mapper.MatchMapper;
 import org.fivy.matchservice.application.service.MatchService;
-import org.fivy.matchservice.domain.entity.Match;
-import org.fivy.matchservice.domain.entity.MatchPlayer;
-import org.fivy.matchservice.domain.entity.MatchTeam;
-import org.fivy.matchservice.domain.entity.MatchWeather;
-import org.fivy.matchservice.domain.enums.JoinRequestStatus;
-import org.fivy.matchservice.domain.enums.MatchStatus;
-import org.fivy.matchservice.domain.enums.SkillLevel;
+import org.fivy.matchservice.domain.entity.*;
+import org.fivy.matchservice.domain.enums.*;
 import org.fivy.matchservice.domain.event.MatchEvent;
 import org.fivy.matchservice.domain.event.MatchEventType;
 import org.fivy.matchservice.domain.repository.*;
+import org.fivy.matchservice.infrastructure.config.kafka.KafkaConfig;
 import org.fivy.matchservice.shared.exception.InvalidMatchStateException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -26,6 +24,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.function.Function;
@@ -43,36 +42,57 @@ public class MatchServiceImpl implements MatchService {
     private final MatchJoinRequestRepository matchJoinRequestRepository;
     private final MatchMapper matchMapper;
     private final WeatherServiceImpl weatherService;
-    private final MatchWeatherRepository matchWeatherRepository;
+    private final MatchResultRepository matchResultRepository;
+    private final MatchScoreSubmissionRepository scoreSubmissionRepository;
+    private final MatchFeedbackRequestRepository feedbackRequestRepository;
+    private final PlayerMatchFeedbackRepository playerFeedbackRepository;
+    private final PlayerRatingRepository playerRatingRepository;
     private final KafkaTemplate<String, MatchEvent> kafkaTemplate;
+    private final NotificationService notificationService;
 
     @Override
     public MatchResponse createMatch(UUID creatorId, CreateMatchRequest request) {
         log.debug("Creating match for creator: {}", creatorId);
         Match match = matchMapper.toEntity(request);
         match.setCreatorId(creatorId);
-        match.setStatus(MatchStatus.DRAFT);
+        match.setStatus(MatchStatus.OPEN);
         match.setCreatedAt(ZonedDateTime.now());
         match.setUpdatedAt(ZonedDateTime.now());
         match.setMaxPlayers(match.getMaxPlayers());
         match.setMaxPlayersPerTeam(match.getPlayersPerTeam());
         Match savedMatch = matchRepository.save(match);
         log.debug("Match created with ID: {}", savedMatch.getId());
-        createTeamsForMatch(savedMatch);
+        MatchTeam team1 = createTeamsForMatch(savedMatch);
+        assignCreatorToATeam(creatorId, savedMatch, team1);
         MatchWeather savedWeather = weatherService.fetchAndSaveWeather(savedMatch);
         if (savedWeather != null) {
             log.info("Saved weather data for match ID: {}", savedMatch.getId());
         }
+        publishMatchEvent(savedMatch, MatchEventType.MATCH_CREATED);
         return matchMapper.toMatchResponse(savedMatch);
     }
 
-    private void createTeamsForMatch(Match match) {
+    private void assignCreatorToATeam(UUID creatorId, Match savedMatch, MatchTeam team1) {
+        PlayerRole role = PlayerRole.MIDFIELDER;
+        MatchPlayer newPlayer = MatchPlayer.builder()
+                .match(savedMatch)
+                .team(team1)
+                .playerId(creatorId)
+                .role(role)
+                .status(PlayerStatus.JOINED)
+                .joinedAt(LocalDateTime.now())
+                .build();
+        playerRepository.save(newPlayer);
+        log.info("Match creator has joined team {}", team1.getId());
+    }
+
+    private MatchTeam createTeamsForMatch(Match match) {
         log.debug("Creating teams for match: {} with format: {}", match.getId(), match.getFormat());
 
         MatchTeam team1 = MatchTeam.builder()
                 .match(match)
                 .teamNumber(1)
-                .name("Team 1")
+                .name("Équipe 1")
                 .build();
         matchTeamRepository.save(team1);
         log.debug("Created team 1 with ID: {}", team1.getId());
@@ -80,12 +100,13 @@ public class MatchServiceImpl implements MatchService {
         MatchTeam team2 = MatchTeam.builder()
                 .match(match)
                 .teamNumber(2)
-                .name("Team 2")
+                .name("Équipe 2")
                 .build();
         matchTeamRepository.save(team2);
         log.debug("Created team 2 with ID: {}", team2.getId());
 
         log.info("Created {} teams for match ID: {} with format: {}", 2, match.getId(), match.getFormat());
+        return team1;
     }
 
     @Override
@@ -118,9 +139,10 @@ public class MatchServiceImpl implements MatchService {
         response.setJoinRequestCount(
                 matchJoinRequestRepository.countByMatchIdAndRequestStatusNotIn(
                         match.getId(),
-                        List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED)
+                        List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED,  JoinRequestStatus.LEFT)
                 )
-        );        response.setOwner(match.getCreatorId().equals(currentUserId));
+        );
+        response.setOwner(match.getCreatorId().equals(currentUserId));
         return response;
     }
 
@@ -163,7 +185,7 @@ public class MatchServiceImpl implements MatchService {
 
     private Map<UUID, List<MatchPlayer>> createTeamPlayersMap(Match match) {
         return match.getPlayers().stream()
-                .filter(player -> player.getTeam() != null)
+                .filter(player -> player.getTeam() != null && player.getStatus() != PlayerStatus.LEFT)
                 .collect(Collectors.groupingBy(
                         player -> player.getTeam().getId(),
                         Collectors.toList()
@@ -208,7 +230,7 @@ public class MatchServiceImpl implements MatchService {
             response.setJoinRequestCount(
                     matchJoinRequestRepository.countByMatchIdAndRequestStatusNotIn(
                             match.getId(),
-                            List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED)
+                            List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED, JoinRequestStatus.LEFT)
                     )
             );
             return response;
@@ -243,9 +265,409 @@ public class MatchServiceImpl implements MatchService {
 
     @Override
     @Transactional(readOnly = true)
+    public Page<MatchResponse> searchMatches(FilterMatchesRequest filters, Pageable pageable, UUID currentUserId) {
+        if (filters == null) {
+            throw new IllegalArgumentException("Filter request cannot be null");
+        }
+        if (currentUserId == null) {
+            throw new IllegalArgumentException("User ID cannot be null");
+        }
+
+        log.debug("Searching matches with filters: {}", filters);
+        String searchQuery = filters.getSearchQuery();
+        List<SkillLevel> skillLevelEnums = filters.getSkillLevels() != null ?
+                filters.getSkillLevels() : new ArrayList<>();
+
+        List<MatchStatus> statusEnums = filters.getStatuses() != null ?
+                filters.getStatuses() : new ArrayList<>();
+
+        List<MatchFormat> formatEnums = filters.getFormats() != null ?
+                filters.getFormats() : new ArrayList<>();
+        List<String> skillLevels = skillLevelEnums.stream()
+                .map(Enum::name)
+                .collect(Collectors.toList());
+
+        List<String> statuses = statusEnums.stream()
+                .map(Enum::name)
+                .collect(Collectors.toList());
+
+        List<String> formats = formatEnums.stream()
+                .map(Enum::name)
+                .collect(Collectors.toList());
+        Double latitude = filters.getLatitude();
+        Double longitude = filters.getLongitude();
+        Double distance = filters.getDistance();
+        Page<Match> matchPage = matchRepository.findAllByFilters(
+                searchQuery,
+                skillLevels,
+                skillLevels.isEmpty(),
+                statuses,
+                statuses.isEmpty(),
+                formats,
+                formats.isEmpty(),
+                latitude,
+                longitude,
+                distance,
+                pageable
+        );
+
+        return matchPage.map(match -> {
+            MatchResponse response = matchMapper.toMatchResponse(match);
+            response.setJoined(playerRepository.existsByMatchIdAndPlayerId(match.getId(), currentUserId));
+            response.setOwner(match.getCreatorId().equals(currentUserId));
+            response.setJoinedCount(playerRepository.countByMatchId(match.getId()));
+            response.setSavedCount(savedMatchRepository.countByMatchId(match.getId()));
+            response.setJoinRequestCount(
+                    matchJoinRequestRepository.countByMatchIdAndRequestStatusNotIn(
+                            match.getId(),
+                            List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED,  JoinRequestStatus.LEFT)
+                    )
+            );
+            return response;
+
+        });
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<MatchResponse> getUserUpcomingMatches(UUID userId, Pageable pageable) {
+        log.debug("Fetching upcoming matches for user: {}", userId);
+        ZonedDateTime now = ZonedDateTime.now();
+        Page<Match> upcomingMatches = matchRepository.findUserUpcomingMatches(
+                userId,
+                now,
+                Arrays.asList(MatchStatus.OPEN, MatchStatus.IN_PROGRESS),
+                PlayerStatus.LEFT,
+                pageable
+        );
+        return upcomingMatches.map(match -> {
+            MatchResponse response = matchMapper.toMatchResponse(match);
+            response.setJoined(true);
+            response.setOwner(match.getCreatorId().equals(userId));
+            response.setMaxPlayers(match.getMaxPlayers());
+            response.setJoinedCount(playerRepository.countByMatchId(match.getId()));
+            response.setSavedCount(savedMatchRepository.countByMatchId(match.getId()));
+            response.setJoinRequestCount(
+                    matchJoinRequestRepository.countByMatchIdAndRequestStatusNotIn(
+                            match.getId(),
+                            List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED, JoinRequestStatus.LEFT)
+                    )
+            );
+            return response;
+        });
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MatchHistoryResponse getMatchHistoryDetail(UUID matchId, UUID userId) {
+        log.debug("Fetching match history detail for matchId: {} and userId: {}", matchId, userId);
+
+        Match match = findMatchOrThrow(matchId);
+
+        MatchPlayer matchPlayer = playerRepository.findByMatchIdAndPlayerId(matchId, userId)
+                .orElseThrow(() -> new org.fivy.matchservice.shared.exception.MatchException(
+                        "User did not participate in this match: " + matchId,
+                        "USER_NOT_IN_MATCH",
+                        HttpStatus.FORBIDDEN));
+
+        MatchHistoryResponse response = matchMapper.toMatchHistoryResponse(match);
+        response.setIsCreator(match.getCreatorId().equals(userId));
+
+        response.setPlayerRole(matchPlayer.getRole());
+        response.setPlayerStatus(matchPlayer.getStatus());
+        response.setJoinedAt(matchPlayer.getJoinedAt());
+
+        if (matchPlayer.getTeam() != null) {
+            response.setPlayerTeamId(matchPlayer.getTeam().getId());
+            response.setPlayerTeamName(matchPlayer.getTeam().getName());
+            response.setPlayerTeamNumber(matchPlayer.getTeam().getTeamNumber());
+        }
+
+        if (match.getWeather() != null) {
+            MatchWeather weather = match.getWeather();
+            response.setWeather(MatchHistoryResponse.WeatherInfo.builder()
+                    .temperature(weather.getTemperature())
+                    .condition(weather.getCondition())
+                    .humidity(weather.getHumidity())
+                    .windSpeed(weather.getWindSpeed())
+                    .cloudCoverage(weather.getCloudCoverage())
+                    .build());
+        }
+
+        List<MatchTeam> teams = matchTeamRepository.findByMatchId(match.getId());
+        List<MatchHistoryResponse.TeamInfo> teamInfos = new ArrayList<>();
+
+        for (MatchTeam team : teams) {
+            List<MatchPlayer> teamPlayers = playerRepository.findByTeamId(team.getId());
+            List<MatchHistoryResponse.PlayerInfo> playerInfos = teamPlayers.stream()
+                    .map(player -> MatchHistoryResponse.PlayerInfo.builder()
+                            .playerId(player.getPlayerId())
+                            .role(player.getRole())
+                            .status(player.getStatus())
+                            .joinedAt(player.getJoinedAt())
+                            .build())
+                    .collect(Collectors.toList());
+
+            teamInfos.add(MatchHistoryResponse.TeamInfo.builder()
+                    .teamId(team.getId())
+                    .teamName(team.getName())
+                    .teamNumber(team.getTeamNumber())
+                    .players(playerInfos)
+                    .build());
+        }
+        response.setTeams(teamInfos);
+
+        matchResultRepository.findByMatchId(match.getId()).ifPresent(result -> {
+            MatchHistoryResponse.ResultInfo resultInfo = MatchHistoryResponse.ResultInfo.builder()
+                    .status(result.getStatus())
+                    .team1Score(result.getTeam1Score())
+                    .team2Score(result.getTeam2Score())
+                    .confirmedAt(result.getConfirmedAt())
+                    .build();
+
+            if (result.getWinningTeam() != null) {
+                resultInfo.setWinningTeamId(result.getWinningTeam().getId());
+                resultInfo.setWinningTeamName(result.getWinningTeam().getName());
+                resultInfo.setWinningTeamNumber(result.getWinningTeam().getTeamNumber());
+            }
+
+            scoreSubmissionRepository.findByMatchIdAndSubmitterId(match.getId(), userId)
+                    .ifPresent(submission -> {
+                        resultInfo.setUserSubmittedScore(true);
+                        resultInfo.setUserSubmittedTeam1Score(submission.getTeam1Score());
+                        resultInfo.setUserSubmittedTeam2Score(submission.getTeam2Score());
+                        resultInfo.setUserScoreSubmissionStatus(submission.getStatus());
+                    });
+
+            response.setResult(resultInfo);
+        });
+
+        feedbackRequestRepository.findByMatchId(match.getId()).ifPresent(feedbackRequest -> {
+            MatchHistoryResponse.FeedbackInfo feedbackInfo = MatchHistoryResponse.FeedbackInfo.builder()
+                    .requestStatus(feedbackRequest.getStatus())
+                    .expiryAt(feedbackRequest.getExpiryAt())
+                    .build();
+
+            playerFeedbackRepository.findByFeedbackRequestIdAndPlayerId(feedbackRequest.getId(), userId)
+                    .ifPresent(feedback -> {
+                        feedbackInfo.setUserSubmittedFeedback(true);
+                        feedbackInfo.setUserMatchRating(feedback.getMatchRating());
+                        feedbackInfo.setUserMatchComments(feedback.getMatchComments());
+                        feedbackInfo.setUserFeedbackSubmittedAt(feedback.getSubmittedAt());
+                    });
+
+            List<PlayerRating> ratingsReceived = playerRatingRepository.findByFeedbackRequestIdAndRatedPlayerId(
+                    feedbackRequest.getId(), userId);
+
+            if (!ratingsReceived.isEmpty()) {
+                List<MatchHistoryResponse.RatingInfo> ratings = ratingsReceived.stream()
+                        .map(rating -> MatchHistoryResponse.RatingInfo.builder()
+                                .ratingPlayerId(rating.getRatingPlayerId())
+                                .skillRating(rating.getSkillRating())
+                                .sportsmanshipRating(rating.getSportsmanshipRating())
+                                .teamworkRating(rating.getTeamworkRating())
+                                .reliabilityRating(rating.getReliabilityRating())
+                                .comments(rating.getComments())
+                                .build())
+                        .collect(Collectors.toList());
+
+                feedbackInfo.setRatingsReceived(ratings);
+
+                feedbackInfo.setAvgSkillRating(ratingsReceived.stream()
+                        .filter(r -> r.getSkillRating() != null)
+                        .mapToInt(PlayerRating::getSkillRating)
+                        .average().orElse(0));
+                feedbackInfo.setAvgSportsmanshipRating(ratingsReceived.stream()
+                        .filter(r -> r.getSportsmanshipRating() != null)
+                        .mapToInt(PlayerRating::getSportsmanshipRating)
+                        .average().orElse(0));
+                feedbackInfo.setAvgTeamworkRating(ratingsReceived.stream()
+                        .filter(r -> r.getTeamworkRating() != null)
+                        .mapToInt(PlayerRating::getTeamworkRating)
+                        .average().orElse(0));
+                feedbackInfo.setAvgReliabilityRating(ratingsReceived.stream()
+                        .filter(r -> r.getReliabilityRating() != null)
+                        .mapToInt(PlayerRating::getReliabilityRating)
+                        .average().orElse(0));
+
+                double overallAvg = (feedbackInfo.getAvgSkillRating() +
+                        feedbackInfo.getAvgSportsmanshipRating() +
+                        feedbackInfo.getAvgTeamworkRating() +
+                        feedbackInfo.getAvgReliabilityRating()) / 4.0;
+                feedbackInfo.setAvgOverallRating(overallAvg);
+            }
+
+            response.setFeedback(feedbackInfo);
+        });
+
+        return response;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<MatchHistoryResponse> getMatchHistory(UUID userId, Pageable pageable) {
+        log.debug("Fetching match history for user: {}", userId);
+
+        Page<MatchPlayer> userMatchPlayers = playerRepository.findByPlayerIdAndMatchStatusOrderByMatchStartDateDesc(userId, MatchStatus.FINISHED, pageable);
+
+        return userMatchPlayers.map(matchPlayer -> {
+            Match match = matchPlayer.getMatch();
+
+            MatchHistoryResponse response = matchMapper.toMatchHistoryResponse(match);
+            response.setIsCreator(match.getCreatorId().equals(userId));
+
+            response.setPlayerRole(matchPlayer.getRole());
+            response.setPlayerStatus(matchPlayer.getStatus());
+            response.setJoinedAt(matchPlayer.getJoinedAt());
+
+            if (matchPlayer.getTeam() != null) {
+                response.setPlayerTeamId(matchPlayer.getTeam().getId());
+                response.setPlayerTeamName(matchPlayer.getTeam().getName());
+                response.setPlayerTeamNumber(matchPlayer.getTeam().getTeamNumber());
+            }
+
+            if (match.getWeather() != null) {
+                MatchWeather weather = match.getWeather();
+                response.setWeather(MatchHistoryResponse.WeatherInfo.builder()
+                        .temperature(weather.getTemperature())
+                        .condition(weather.getCondition())
+                        .humidity(weather.getHumidity())
+                        .windSpeed(weather.getWindSpeed())
+                        .cloudCoverage(weather.getCloudCoverage())
+                        .build());
+            }
+
+            List<MatchTeam> teams = matchTeamRepository.findByMatchId(match.getId());
+            List<MatchHistoryResponse.TeamInfo> teamInfos = new ArrayList<>();
+
+            for (MatchTeam team : teams) {
+                List<MatchPlayer> teamPlayers = playerRepository.findByTeamId(team.getId());
+                List<MatchHistoryResponse.PlayerInfo> playerInfos = teamPlayers.stream()
+                        .map(player -> MatchHistoryResponse.PlayerInfo.builder()
+                                .playerId(player.getPlayerId())
+                                .role(player.getRole())
+                                .status(player.getStatus())
+                                .joinedAt(player.getJoinedAt())
+                                .build())
+                        .collect(Collectors.toList());
+
+                teamInfos.add(MatchHistoryResponse.TeamInfo.builder()
+                        .teamId(team.getId())
+                        .teamName(team.getName())
+                        .teamNumber(team.getTeamNumber())
+                        .players(playerInfos)
+                        .build());
+            }
+            response.setTeams(teamInfos);
+
+            matchResultRepository.findByMatchId(match.getId()).ifPresent(result -> {
+                MatchHistoryResponse.ResultInfo resultInfo = MatchHistoryResponse.ResultInfo.builder()
+                        .status(result.getStatus())
+                        .team1Score(result.getTeam1Score())
+                        .team2Score(result.getTeam2Score())
+                        .confirmedAt(result.getConfirmedAt())
+                        .build();
+
+                if (result.getWinningTeam() != null) {
+                    resultInfo.setWinningTeamId(result.getWinningTeam().getId());
+                    resultInfo.setWinningTeamName(result.getWinningTeam().getName());
+                    resultInfo.setWinningTeamNumber(result.getWinningTeam().getTeamNumber());
+                }
+
+                scoreSubmissionRepository.findByMatchIdAndSubmitterId(match.getId(), userId)
+                        .ifPresent(submission -> {
+                            resultInfo.setUserSubmittedScore(true);
+                            resultInfo.setUserSubmittedTeam1Score(submission.getTeam1Score());
+                            resultInfo.setUserSubmittedTeam2Score(submission.getTeam2Score());
+                            resultInfo.setUserScoreSubmissionStatus(submission.getStatus());
+                        });
+
+                response.setResult(resultInfo);
+            });
+
+            Optional<MatchFeedbackRequest> feedbackRequestOpt = feedbackRequestRepository.findByMatchId(match.getId());
+            feedbackRequestOpt.ifPresent(feedbackRequest -> {
+                MatchHistoryResponse.FeedbackInfo feedbackInfo = MatchHistoryResponse.FeedbackInfo.builder()
+                        .requestStatus(feedbackRequest.getStatus())
+                        .expiryAt(feedbackRequest.getExpiryAt())
+                        .build();
+
+                playerFeedbackRepository.findByFeedbackRequestIdAndPlayerId(feedbackRequest.getId(), userId)
+                        .ifPresent(feedback -> {
+                            feedbackInfo.setUserSubmittedFeedback(true);
+                            feedbackInfo.setUserMatchRating(feedback.getMatchRating());
+                            feedbackInfo.setUserMatchComments(feedback.getMatchComments());
+                            feedbackInfo.setUserFeedbackSubmittedAt(feedback.getSubmittedAt());
+                        });
+
+                List<PlayerRating> ratingsReceived = playerRatingRepository.findByFeedbackRequestIdAndRatedPlayerId(
+                        feedbackRequest.getId(), userId);
+
+                if (!ratingsReceived.isEmpty()) {
+                    List<MatchHistoryResponse.RatingInfo> ratings = ratingsReceived.stream()
+                            .map(rating -> MatchHistoryResponse.RatingInfo.builder()
+                                    .ratingPlayerId(rating.getRatingPlayerId())
+                                    .skillRating(rating.getSkillRating())
+                                    .sportsmanshipRating(rating.getSportsmanshipRating())
+                                    .teamworkRating(rating.getTeamworkRating())
+                                    .reliabilityRating(rating.getReliabilityRating())
+                                    .comments(rating.getComments())
+                                    .build())
+                            .collect(Collectors.toList());
+
+                    feedbackInfo.setRatingsReceived(ratings);
+
+                    feedbackInfo.setAvgSkillRating(ratingsReceived.stream()
+                            .filter(r -> r.getSkillRating() != null)
+                            .mapToInt(PlayerRating::getSkillRating)
+                            .average().orElse(0));
+                    feedbackInfo.setAvgSportsmanshipRating(ratingsReceived.stream()
+                            .filter(r -> r.getSportsmanshipRating() != null)
+                            .mapToInt(PlayerRating::getSportsmanshipRating)
+                            .average().orElse(0));
+                    feedbackInfo.setAvgTeamworkRating(ratingsReceived.stream()
+                            .filter(r -> r.getTeamworkRating() != null)
+                            .mapToInt(PlayerRating::getTeamworkRating)
+                            .average().orElse(0));
+                    feedbackInfo.setAvgReliabilityRating(ratingsReceived.stream()
+                            .filter(r -> r.getReliabilityRating() != null)
+                            .mapToInt(PlayerRating::getReliabilityRating)
+                            .average().orElse(0));
+
+                    double overallAvg = (feedbackInfo.getAvgSkillRating() +
+                            feedbackInfo.getAvgSportsmanshipRating() +
+                            feedbackInfo.getAvgTeamworkRating() +
+                            feedbackInfo.getAvgReliabilityRating()) / 4.0;
+                    feedbackInfo.setAvgOverallRating(overallAvg);
+                }
+                response.setFeedback(feedbackInfo);
+            });
+
+            return response;
+        });
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public Page<MatchResponse> getMatchesByCreator(UUID creatorId, Pageable pageable) {
         log.debug("Fetching matches for creator: {}", creatorId);
-        return matchRepository.findByCreatorId(creatorId, pageable).map(matchMapper::toMatchResponse);
+        Page<Match> matchPage = matchRepository.findByCreatorId(creatorId, pageable);
+        return matchPage.map(match -> {
+            MatchResponse response = matchMapper.toMatchResponse(match);
+            response.setOwner(match.getCreatorId().equals(creatorId));
+            response.setCreatorId(creatorId);
+            response.setJoined(playerRepository.existsByMatchIdAndPlayerId(match.getId(), creatorId));
+            response.setMaxPlayers(match.getMaxPlayers());
+            response.setJoinedCount(playerRepository.countByMatchId(match.getId()));
+            response.setSavedCount(savedMatchRepository.countByMatchId(match.getId()));
+            response.setJoinRequestCount(
+                    matchJoinRequestRepository.countByMatchIdAndRequestStatusNotIn(
+                            match.getId(),
+                            List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED, JoinRequestStatus.LEFT)
+                    )
+            );
+            return response;
+        });
     }
 
     @Override
@@ -254,10 +676,32 @@ public class MatchServiceImpl implements MatchService {
         Match match = findMatchOrThrow(matchId);
         validateMatchDeletable(match);
 
-        matchRepository.delete(match);
-        log.debug("Match deleted with ID: {}", matchId);
-
         publishMatchEvent(match, MatchEventType.MATCH_DELETED);
+
+        log.debug("Deleting dependent entities for match: {}", matchId);
+        playerRatingRepository.deleteByFeedbackFeedbackRequestIdIn(
+                feedbackRequestRepository.findByMatchId(matchId)
+                        .map(MatchFeedbackRequest::getId)
+                        .stream()
+                        .collect(Collectors.toList())
+        );
+        playerFeedbackRepository.deleteByFeedbackRequestIdIn(
+                feedbackRequestRepository.findByMatchId(matchId)
+                        .map(MatchFeedbackRequest::getId)
+                        .stream()
+                        .collect(Collectors.toList())
+        );
+        feedbackRequestRepository.deleteByMatchId(matchId);
+        scoreSubmissionRepository.deleteByMatchId(matchId);
+        matchResultRepository.deleteByMatchId(matchId);
+        matchJoinRequestRepository.deleteByMatchId(matchId);
+        playerRepository.deleteByMatchId(matchId);
+        matchTeamRepository.deleteByMatchId(matchId);
+        weatherService.deleteWeatherByMatchId(matchId);
+        savedMatchRepository.deleteByMatchId(matchId);
+
+        matchRepository.delete(match);
+        log.info("Match and all dependent entities deleted for match ID: {}", matchId);
     }
 
     @Override
@@ -265,10 +709,8 @@ public class MatchServiceImpl implements MatchService {
         log.debug("Updating status for match: {} to: {}", matchId, newStatus);
         Match match = findMatchOrThrow(matchId);
         validateStatusTransition(match.getStatus(), newStatus);
-
         match.setStatus(newStatus);
         match.setUpdatedAt(ZonedDateTime.now());
-
         Match updatedMatch = matchRepository.save(match);
         log.debug("Match status updated for ID: {} to {}", matchId, newStatus);
 
@@ -324,17 +766,27 @@ public class MatchServiceImpl implements MatchService {
     }
 
     private void publishMatchEvent(Match match, MatchEventType eventType) {
-        log.debug("Publishing event: {} for match ID: {}", eventType, match.getId());
+        log.debug("Publication de l'événement: {} pour le match ID: {}", eventType, match.getId());
+        Map<String, String> eventData = buildEventData(match);
+        MatchEvent event = MatchEvent.builder()
+                .type(eventType)
+                .matchId(match.getId())
+                .creatorId(match.getCreatorId())
+                .data(eventData)
+                .timestamp(ZonedDateTime.now().toLocalDateTime())
+                .build();
 
-        MatchEvent event = MatchEvent.builder().type(eventType).matchId(match.getId()).creatorId(match.getCreatorId()).data(buildEventData(match)).timestamp(ZonedDateTime.now().toLocalDateTime()).build();
+        match.setLastEventData(eventData);
+        kafkaTemplate.send(KafkaConfig.TOPIC_MATCH_EVENTS, match.getId().toString(), event)
+                .whenComplete((result, ex) -> {
+                    if (ex != null) {
+                        log.error("Échec de la publication de l'événement: {}", eventType, ex);
+                    } else {
+                        log.debug("Événement publié avec succès: {}", eventType);
 
-        kafkaTemplate.send("match-events", match.getId().toString(), event).whenComplete((result, ex) -> {
-            if (ex != null) {
-                log.error("Failed to publish match event: {}", eventType, ex);
-            } else {
-                log.debug("Successfully published match event: {}", eventType);
-            }
-        });
+                        notificationService.sendMatchEventNotifications(match, eventType);
+                    }
+                });
     }
 
     private Map<String, String> buildEventData(Match match) {
@@ -342,9 +794,13 @@ public class MatchServiceImpl implements MatchService {
         data.put("title", match.getTitle());
         data.put("format", match.getFormat().toString());
         data.put("status", match.getStatus().toString());
-        data.put("address", match.getLocation().getAddress());
-        data.put("latitude", match.getLocation().getCoordinates().getLatitude().toString());
-        data.put("longitude", match.getLocation().getCoordinates().getLongitude().toString());
+        if (match.getLocation() != null) {
+            data.put("address", match.getLocation().getAddress());
+            if (match.getLocation().getCoordinates() != null) {
+                data.put("latitude", match.getLocation().getCoordinates().getLatitude().toString());
+                data.put("longitude", match.getLocation().getCoordinates().getLongitude().toString());
+            }
+        }
         data.put("skillLevel", match.getSkillLevel().name());
         data.put("startDate", match.getStartDate().toString());
         data.put("duration", match.getDuration().toString());

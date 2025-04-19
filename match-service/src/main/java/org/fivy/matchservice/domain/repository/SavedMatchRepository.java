@@ -17,4 +17,8 @@ public interface SavedMatchRepository extends JpaRepository<SavedMatch, UUID> {
     void deleteByMatchIdAndUserId(UUID matchId, UUID userId);
 
     int countByMatchId(UUID matchId);
+
+    int countByUserId(UUID userId);
+
+    void deleteByMatchId(UUID matchId);
 }

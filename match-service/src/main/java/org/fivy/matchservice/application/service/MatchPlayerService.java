@@ -12,4 +12,6 @@ public interface MatchPlayerService {
     MatchPlayerResponse getPlayerStatus(UUID playerId, UUID currentUserId);
 
     List<MatchPlayerResponse> getPlayersStatus(UUID currentUserId);
+
+    void leaveMatch(UUID requestId, UUID matchId, UUID userId);
 }

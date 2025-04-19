@@ -44,6 +44,7 @@ public class MatchHistoryResponse {
     private WeatherInfo weather;
 
     private FeedbackInfo feedback;
+    private double price;
 
     @Data
     @NoArgsConstructor

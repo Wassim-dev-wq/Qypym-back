@@ -36,7 +36,10 @@ public class MatchDetailsResponse implements Serializable {
     private int maxPlayers;
     private int maxPlayersPerTeam;
     private int currentPlayers;
+    private String verificationCode;
+    private ZonedDateTime codeExpiryTime;
     private WeatherResponse weather;
+    private double price;
 
     @Data
     @NoArgsConstructor

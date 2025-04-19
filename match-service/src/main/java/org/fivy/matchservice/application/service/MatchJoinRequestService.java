@@ -19,10 +19,13 @@ public interface MatchJoinRequestService {
     );
 
     MatchJoinRequestResponse getJoinRequest(UUID matchId, UUID userId);
-    MatchJoinRequestResponse acceptJoinRequest(UUID matchId, UUID requestId, UUID ownerId, UUID assignedTeamId);
+    MatchJoinRequestResponse acceptJoinRequest(UUID requestId, UUID ownerId, UUID assignedTeamId);
+
     MatchJoinRequestResponse rejectJoinRequest(UUID matchId, UUID requestId, UUID ownerId);
     List<MatchJoinRequestResponse> getJoinRequests(UUID matchId, UUID userId);
 
-    MatchJoinRequestResponse cancelJoinRequest(UUID matchId, UUID requestId, UUID uuid);
+    List<MatchJoinRequestResponse> getUserJoinRequests(UUID userId);
+
+    MatchJoinRequestResponse cancelJoinRequest(UUID requestId, UUID uuid);
 
 }

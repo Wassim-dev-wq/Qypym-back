@@ -1,5 +1,8 @@
 package org.fivy.matchservice.domain.enums;
 
+import com.fasterxml.jackson.annotation.JsonValue;
+import lombok.Getter;
+
 public enum PlayerRole {
     CREATOR,
     PLAYER,
@@ -9,7 +12,5 @@ public enum PlayerRole {
     MIDFIELDER,
     FORWARD,
     STRIKER,
-    UNKNOWN
-
-
+    UNKNOWN,
 }
