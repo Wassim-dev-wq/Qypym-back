@@ -2,8 +2,10 @@ package org.fivy.notificationservice.application.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fivy.notificationservice.api.dto.request.SupportRequestDto;
 import org.fivy.notificationservice.api.dto.response.NotificationResponse;
 import org.fivy.notificationservice.application.service.NotificationService;
+import org.fivy.notificationservice.application.service.UserNotificationPreferencesService;
 import org.fivy.notificationservice.domain.entity.Notification;
 import org.fivy.notificationservice.domain.enums.NotificationType;
 import org.fivy.notificationservice.domain.repository.NotificationRepository;
@@ -31,12 +33,14 @@ public class NotificationServiceImpl implements NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final RestTemplate restTemplate;
+    private final UserNotificationPreferencesService preferencesService;
 
     @Value("${expo.push.url:https://exp.host/--/api/v2/push/send}")
     private String expoPushUrl;
 
     @Value("${expo.push.timeout:5000}")
     private int expoPushTimeout;
+    private final EmailService emailService;
 
     @Override
     @Transactional
@@ -59,6 +63,16 @@ public class NotificationServiceImpl implements NotificationService {
     @Override
     @Transactional
     public void sendPushNotification(String expoPushToken, String title, String message) {
+        sendPushNotification(null, expoPushToken, title, message);
+    }
+
+    @Override
+    @Transactional
+    public void sendPushNotification(UUID userId, String expoPushToken, String title, String message) {
+        if (userId != null && !preferencesService.shouldSendPushMatchUpdate(userId)) {
+            log.debug("Push notifications disabled for user {}", userId);
+            return;
+        }
         log.debug("Sending push notification via Expo: {} - {}", title, message);
         Map<String, Object> payload = new HashMap<>();
         payload.put("to", expoPushToken);
@@ -126,6 +140,10 @@ public class NotificationServiceImpl implements NotificationService {
         notificationRepository.markAllAsReadByUserId(userId);
     }
 
+    @Override
+    public void sendSupportEmail(SupportRequestDto request) {
+        emailService.sendSupportEmail(request);
+    }
     private NotificationResponse mapToResponse(Notification notification) {
         return NotificationResponse.builder()
                 .id(notification.getId())

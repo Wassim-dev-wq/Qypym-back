@@ -8,6 +8,7 @@ import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fivy.notificationservice.application.service.MatchEmailService;
+import org.fivy.notificationservice.application.service.UserNotificationPreferencesService;
 import org.fivy.notificationservice.domain.event.email.MatchEmailEvent;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -19,6 +20,7 @@ import java.io.IOException;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +29,7 @@ public class MatchEmailServiceImpl implements MatchEmailService {
 
     private final JavaMailSender mailSender;
     private final Configuration freemarkerConfig;
+    private final UserNotificationPreferencesService preferencesService;
 
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
@@ -36,6 +39,11 @@ public class MatchEmailServiceImpl implements MatchEmailService {
 
     @Override
     public boolean sendVerificationCodeEmail(MatchEmailEvent event) {
+        UUID userId = event.getUserId();
+        if (!preferencesService.shouldSendEmailMatchUpdate(userId)) {
+            log.debug("Match email notifications disabled for user: {}", userId);
+            return false;
+        }
         try {
             Template template = freemarkerConfig.getTemplate("match-verification-email.ftl");
 
@@ -47,16 +55,13 @@ public class MatchEmailServiceImpl implements MatchEmailService {
             model.put("matchFormat", event.getMatchFormat());
             model.put("verificationCode", event.getVerificationCode());
             model.put("codeValidityMinutes", event.getVerificationCodeTtl());
-
             String htmlContent = FreeMarkerTemplateUtils.processTemplateIntoString(template, model);
-
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             helper.setFrom(fromEmail);
             helper.setTo(event.getEmail());
             helper.setSubject("Code de vérification pour votre match - " + event.getMatchTitle());
             helper.setText(htmlContent, true);
-
             mailSender.send(message);
             log.debug("Verification email sent successfully to {}", event.getEmail());
             return true;
@@ -74,9 +79,13 @@ public class MatchEmailServiceImpl implements MatchEmailService {
 
     @Override
     public boolean sendMatchReminderEmail(MatchEmailEvent event) {
+        UUID userId = event.getUserId();
+        if (!preferencesService.shouldSendEmailMatchReminder(userId)) {
+            log.debug("Match reminder emails disabled for user: {}", userId);
+            return false;
+        }
         try {
             Template template = freemarkerConfig.getTemplate("match-reminder-email.ftl");
-
             Map<String, Object> model = new HashMap<>();
             model.put("firstName", event.getFirstName());
             model.put("matchTitle", event.getMatchTitle());

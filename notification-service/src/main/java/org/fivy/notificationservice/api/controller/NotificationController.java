@@ -2,8 +2,10 @@ package org.fivy.notificationservice.api.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fivy.notificationservice.api.dto.request.SupportRequestDto;
 import org.fivy.notificationservice.api.dto.response.NotificationResponse;
 import org.fivy.notificationservice.application.service.NotificationService;
 import org.springframework.data.domain.Page;
@@ -71,6 +73,18 @@ public class NotificationController {
         UUID currentUserId = extractUserIdFromJwt(authentication);
         log.info("Marking all notifications as read for user: {}", currentUserId);
         notificationService.markAllAsRead(currentUserId);
+        return org.fivy.notificationservice.api.dto.ApiResponse.success(null);
+    }
+
+    @PostMapping("/support")
+    @Operation(summary = "Submit a support request", description = "Submits a support request and sends an email to support team")
+    public org.fivy.notificationservice.api.dto.ApiResponse<Void> submitSupportRequest(
+            @RequestBody @Valid SupportRequestDto request,
+            Authentication authentication
+    ) {
+        UUID currentUserId = extractUserIdFromJwt(authentication);
+        log.info("Submitting support request from user: {}", currentUserId);
+        notificationService.sendSupportEmail(request);
         return org.fivy.notificationservice.api.dto.ApiResponse.success(null);
     }
 }
