@@ -1,33 +1,27 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Code de vérification pour votre match</title>
-</head>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-<div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
-    <h1 style="color: #2c3e50; margin-top: 0;">Code de vérification pour votre match</h1>
-    <p>Bonjour ${firstName},</p>
-    <p>Voici le code de vérification pour votre match <strong>${matchTitle}</strong> :</p>
+<#import "template.ftl" as layout>
+<@layout.emailLayout>
+    <h1 style="color: #333; font-size: 24px; margin-bottom: 20px; text-align: center;">Réinitialisation de votre mot de passe</h1>
 
-    <div style="background-color: #e9ecef; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0; border-radius: 5px;">
-        ${verificationCode}
+    <p>Bonjour,</p>
+
+    <p>Vous avez demandé la réinitialisation de votre mot de passe. Voici votre code de vérification :</p>
+
+    <div style="text-align: center; margin: 20px 0;">
+        <span style="font-size: 32px; font-weight: bold; color: #E59C00;">${resetCode}</span>
     </div>
 
-    <p>Ce code sera valide jusqu'à ${codeValidityMinutes} minutes après le début du match.</p>
+    <p>Ce code est valide pendant ${expirationMinutes} minutes. Après cette période, vous devrez demander un nouveau code.</p>
 
-    <h2 style="color: #2c3e50; margin-top: 20px;">Détails du match :</h2>
-    <ul style="list-style-type: none; padding-left: 0;">
-        <li><strong>Date et heure :</strong> ${matchDate}</li>
-        <li><strong>Lieu :</strong> ${matchLocation}</li>
-        <li><strong>Format :</strong> ${matchFormat}</li>
-    </ul>
+    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+        <p>Pour des raisons de sécurité :</p>
+        <ul style="list-style-type: none; padding-left: 0;">
+            <li>• Ne partagez jamais ce code avec qui que ce soit</li>
+            <li>• Notre équipe ne vous demandera jamais ce code par téléphone ou email</li>
+            <li>• Utilisez un mot de passe fort et unique</li>
+        </ul>
+    </div>
 
-    <p>Vous pouvez utiliser ce code pour confirmer votre présence et celle des autres joueurs.</p>
-</div>
+    <p style="color: #777; font-size: 13px; margin-top: 30px;">Si vous n'avez pas demandé ce code, veuillez ignorer cet email.</p>
 
-<p style="font-size: 12px; color: #6c757d; margin-top: 30px; text-align: center;">
-    Cet email a été envoyé automatiquement. Merci de ne pas y répondre.
-</p>
-</body>
-</html>
+    <p style="margin-top: 30px;">Cordialement,<br>L'équipe QYPYM</p>
+</@layout.emailLayout>

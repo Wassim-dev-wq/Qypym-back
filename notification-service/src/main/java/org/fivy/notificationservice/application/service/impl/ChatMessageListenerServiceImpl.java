@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fivy.notificationservice.application.service.ChatMessageListenerService;
 import org.fivy.notificationservice.application.service.PushNotificationService;
+import org.fivy.notificationservice.application.service.UserNotificationPreferencesService;
 import org.fivy.notificationservice.domain.entity.UserPushToken;
 import org.fivy.notificationservice.domain.repository.UserPushTokenRepository;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ public class ChatMessageListenerServiceImpl implements ChatMessageListenerServic
     private final Firestore firestore;
     private final UserPushTokenRepository userPushTokenRepository;
     private final PushNotificationService pushNotificationService;
+    private final UserNotificationPreferencesService preferencesService;
 
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private final Map<String, NotificationGroup> pendingNotifications = new ConcurrentHashMap<>();
@@ -162,33 +164,46 @@ public class ChatMessageListenerServiceImpl implements ChatMessageListenerServic
             Map<String, Object> messageData = document.getData();
             Boolean isSystem = (Boolean) messageData.getOrDefault("system", false);
             if (isSystem) return;
+
             String chatRoomId = document.getReference().getParent().getParent().getId();
             log.debug("Processing new message: {} in chat room: {}", document.getId(), chatRoomId);
+
             DocumentReference chatRoomRef = firestore.collection("chatRooms").document(chatRoomId);
             DocumentSnapshot chatRoomSnapshot = chatRoomRef.get().get();
             if (!chatRoomSnapshot.exists()) {
                 log.warn("Chat room not found for message: {}", document.getId());
                 return;
             }
+
             Map<String, Object> chatRoomData = chatRoomSnapshot.getData();
             if (chatRoomData == null) return;
+
             Map<String, Object> user = (Map<String, Object>) messageData.get("user");
             String senderId = user != null ? (String) user.get("_id") : null;
             String senderName = user != null ? (String) user.get("name") : "Unknown";
             String messageText = (String) messageData.get("text");
             List<String> participants = (List<String>) chatRoomData.get("participants");
+
             if (participants != null && senderId != null) {
                 for (String participantId : participants) {
                     if (participantId.equals(senderId)) continue;
+
+                    UUID participantUuid = UUID.fromString(participantId);
+                    if (!preferencesService.shouldSendPushChatMessage(participantUuid)) {
+                        log.debug("Chat notifications disabled for user: {}", participantId);
+                        continue;
+                    }
+
                     boolean needsNotification = shouldSendNotification(
                             participantId,
                             chatRoomId,
                             (Timestamp) messageData.get("createdAt"),
                             chatRoomData
                     );
+
                     if (needsNotification) {
                         queueNotificationForUser(
-                                UUID.fromString(participantId),
+                                participantUuid,
                                 senderName,
                                 messageText,
                                 chatRoomId
@@ -256,17 +271,24 @@ public class ChatMessageListenerServiceImpl implements ChatMessageListenerServic
 
     private void sendGroupedNotification(NotificationGroup group) {
         try {
+            if (!preferencesService.shouldSendPushChatMessage(group.getUserId())) {
+                log.debug("Chat notifications now disabled for user: {}", group.getUserId());
+                return;
+            }
+
             List<UserPushToken> tokens = userPushTokenRepository.findByUserId(group.getUserId());
             if (tokens.isEmpty()) {
                 log.debug("No push token found for user: {}", group.getUserId());
                 return;
             }
+
             String userIdStr = group.getUserId().toString();
             UserSession session = activeUserSessions.get(userIdStr);
             if (session != null && session.isOnline() && group.getChatRoomId().equals(session.getActiveChatRoomId())) {
                 log.debug("Notification cancelled - user now active in chat: {}", group.getChatRoomId());
                 return;
             }
+
             DocumentReference chatRoomRef = firestore.collection("chatRooms").document(group.getChatRoomId());
             DocumentSnapshot chatRoomSnapshot = chatRoomRef.get().get();
             String chatRoomName = "Chat";
@@ -276,6 +298,7 @@ public class ChatMessageListenerServiceImpl implements ChatMessageListenerServic
                     chatRoomName = chatRoomName.substring(0, 27) + "...";
                 }
             }
+
             String title;
             String body;
             int roomUnreadCount = group.getMessageCount();
@@ -291,6 +314,7 @@ public class ChatMessageListenerServiceImpl implements ChatMessageListenerServic
                 title = chatRoomName + ": " + roomUnreadCount + " nouveaux messages";
                 body = group.getMessageCount() + " nouveaux messages";
             }
+
             String notificationId = "chat_" + group.getChatRoomId();
             for (UserPushToken token : tokens) {
                 Map<String, String> data = new HashMap<>();
@@ -300,12 +324,14 @@ public class ChatMessageListenerServiceImpl implements ChatMessageListenerServic
                 data.put("chatRoomName", chatRoomName);
                 data.put("notificationId", notificationId);
                 pushNotificationService.sendNotification(
+                        group.getUserId(),
                         token.getExpoToken(),
                         title,
                         body,
                         data
                 );
             }
+
             log.info("Chat notification sent to user: {} ({} messages, chat room: {})",
                     group.getUserId(), group.getMessageCount(), chatRoomName);
         } catch (Exception e) {
