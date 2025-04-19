@@ -32,6 +32,7 @@ public class MatchResponse {
     private int joinedCount;
     private int maxPlayers;
     private int joinRequestCount;
+    private double price;
 
     @Data
     @NoArgsConstructor

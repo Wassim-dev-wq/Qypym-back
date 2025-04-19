@@ -1,4 +1,4 @@
-package org.fivy.matchservice.infrastructure.config.kafka.infrastructure.security;
+package org.fivy.matchservice.infrastructure.security;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;

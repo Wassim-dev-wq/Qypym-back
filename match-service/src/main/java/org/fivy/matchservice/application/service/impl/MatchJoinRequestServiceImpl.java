@@ -3,10 +3,7 @@ package org.fivy.matchservice.application.service.impl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fivy.matchservice.api.dto.response.MatchJoinRequestResponse;
-import org.fivy.matchservice.api.dto.response.UserPushTokenResponse;
 import org.fivy.matchservice.application.service.MatchJoinRequestService;
-import org.fivy.matchservice.application.service.NotificationService;
-import org.fivy.matchservice.application.service.UserPushTokenService;
 import org.fivy.matchservice.domain.entity.Match;
 import org.fivy.matchservice.domain.entity.MatchJoinRequest;
 import org.fivy.matchservice.domain.entity.MatchPlayer;
@@ -15,6 +12,7 @@ import org.fivy.matchservice.domain.enums.JoinRequestStatus;
 import org.fivy.matchservice.domain.enums.MatchStatus;
 import org.fivy.matchservice.domain.enums.PlayerRole;
 import org.fivy.matchservice.domain.enums.PlayerStatus;
+import org.fivy.matchservice.domain.event.MatchEventType;
 import org.fivy.matchservice.domain.repository.MatchJoinRequestRepository;
 import org.fivy.matchservice.domain.repository.MatchPlayerRepository;
 import org.fivy.matchservice.domain.repository.MatchRepository;
@@ -25,9 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -41,7 +37,6 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
     private final MatchTeamRepository matchTeamRepository;
     private final MatchPlayerRepository matchPlayerRepository;
     private final NotificationService notificationService;
-    private final UserPushTokenService userPushTokenService;
 
     @Override
     public MatchJoinRequestResponse requestToJoin(
@@ -61,6 +56,9 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
         );
         if (match.getStatus() != MatchStatus.OPEN) {
             throw new MatchException("Match is not open for requests", "MATCH_NOT_OPEN", HttpStatus.BAD_REQUEST);
+        }
+        if(match.getCreatorId().equals(userId)) {
+            throw new MatchException("Creator cannot request to join his own match", "CREATOR_CANNOT_JOIN", HttpStatus.BAD_REQUEST);
         }
 
         MatchTeam preferredTeam = null;
@@ -95,6 +93,9 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
 
                 MatchJoinRequest saved = matchJoinRequestRepository.save(existingReq);
                 log.info("User {} re-requested to join match {}", userId, matchId);
+
+                sendJoinRequestNotification(match, personNameFromPosition(position));
+
                 return toResponse(saved);
             }
             if (existingReq.getRequestStatus() == JoinRequestStatus.PENDING ||
@@ -118,6 +119,7 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
 
         MatchJoinRequest saved = matchJoinRequestRepository.save(joinRequest);
         log.info("User {} successfully requested to join match {}", userId, matchId);
+        sendJoinRequestNotification(match, personNameFromPosition(position));
         return toResponse(saved);
     }
 
@@ -135,14 +137,30 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
     }
 
     @Override
-    public MatchJoinRequestResponse acceptJoinRequest(
-            UUID matchId, UUID requestId, UUID ownerId, UUID assignedTeamId) {
-        log.debug("Owner {} is accepting join request {} for match {} with team {}",
-                ownerId, requestId, matchId, assignedTeamId);
-
-        Match match = validateMatchOwner(matchId, ownerId);
-        MatchJoinRequest joinRequest = validateJoinRequest(matchId, requestId);
-
+    public MatchJoinRequestResponse acceptJoinRequest(UUID requestId, UUID ownerId, UUID assignedTeamId) {
+        log.debug("Owner {} is accepting join request {} with team {}", ownerId, requestId, assignedTeamId);
+        MatchJoinRequest joinRequest = matchJoinRequestRepository.findById(requestId)
+                .orElseThrow(() -> new MatchException(
+                        "Join request not found: " + requestId,
+                        "JOIN_REQUEST_NOT_FOUND",
+                        HttpStatus.NOT_FOUND
+                ));
+        Match match = joinRequest.getMatch();
+        UUID matchId = match.getId();
+        if (!match.getCreatorId().equals(ownerId)) {
+            throw new MatchException(
+                    "User is not the match owner",
+                    "NOT_MATCH_OWNER",
+                    HttpStatus.FORBIDDEN
+            );
+        }
+        if (joinRequest.getRequestStatus() != JoinRequestStatus.PENDING) {
+            throw new MatchException(
+                    "Join request is not in PENDING status",
+                    "INVALID_REQUEST_STATUS",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
         MatchTeam assignedTeam = null;
         if (assignedTeamId != null) {
             assignedTeam = matchTeamRepository.findById(assignedTeamId)
@@ -159,54 +177,37 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
                 );
             }
         }
-
         joinRequest.setRequestStatus(JoinRequestStatus.ACCEPTED);
         if (assignedTeam != null) {
             joinRequest.setPreferredTeam(assignedTeam);
         }
-
         MatchJoinRequest saved = matchJoinRequestRepository.save(joinRequest);
         log.info("Join request {} accepted for match {}", requestId, matchId);
-        String notificationTitle = "Demande approuvée";
-        String notificationMessage = String.format("L'organisateur de '%s' a validé votre demande de participation.", match.getTitle());
-        notificationService.sendNotification(joinRequest.getUserId(), notificationTitle, notificationMessage);
-
-        List<UserPushTokenResponse> tokens = userPushTokenService.getTokensByUserId(joinRequest.getUserId());
-        for (UserPushTokenResponse tokenResponse : tokens) {
-            notificationService.sendPushNotification(tokenResponse.getExpoToken(), notificationTitle, notificationMessage);
-        }
-
         createMatchPlayerFromJoinRequest(match, saved);
+        notificationService.sendJoinRequestResponseNotification(match, joinRequest.getUserId(), true);
+        Map<String, String> eventData = new HashMap<>();
+        eventData.put("playerId", joinRequest.getUserId().toString());
+        eventData.put("playerName", personNameFromPosition(joinRequest.getPosition()));
+        match.setLastEventData(eventData);
+        notificationService.sendMatchEventNotifications(match, MatchEventType.PLAYER_JOINED);
         return toResponse(saved);
     }
 
     @Override
     public MatchJoinRequestResponse rejectJoinRequest(UUID matchId, UUID requestId, UUID ownerId) {
         log.debug("Owner {} is rejecting join request {} for match {}", ownerId, requestId, matchId);
-
-        validateMatchOwner(matchId, ownerId);
+        Match match = validateMatchOwner(matchId, ownerId);
         MatchJoinRequest joinRequest = validateJoinRequest(matchId, requestId);
-
         joinRequest.setRequestStatus(JoinRequestStatus.DECLINED);
         MatchJoinRequest saved = matchJoinRequestRepository.save(joinRequest);
         log.info("Join request {} rejected for match {}", requestId, matchId);
-
-        String notificationTitle = "Demande non retenue";
-        String notificationMessage = String.format("L'organisateur de '%s' n'a pas retenu votre candidature pour cet événement.", matchRepository.findById(matchId)
-                .map(Match::getTitle).orElse("ce match"));
-
-        notificationService.sendNotification(joinRequest.getUserId(), notificationTitle, notificationMessage);
-
-        List<UserPushTokenResponse> tokens = userPushTokenService.getTokensByUserId(joinRequest.getUserId());
-        for (UserPushTokenResponse tokenResponse : tokens) {
-            notificationService.sendPushNotification(tokenResponse.getExpoToken(), notificationTitle, notificationMessage);
-        }
+        notificationService.sendJoinRequestResponseNotification(match, joinRequest.getUserId(), false);
         return toResponse(saved);
     }
 
     @Override
-    public MatchJoinRequestResponse cancelJoinRequest(UUID matchId, UUID requestId, UUID userId) {
-        log.debug("User {} is cancelling join request {} for match {}", userId, requestId, matchId);
+    public MatchJoinRequestResponse cancelJoinRequest(UUID requestId, UUID userId) {
+        log.debug("User {} is cancelling join request {}", userId, requestId);
 
         MatchJoinRequest joinRequest = matchJoinRequestRepository.findById(requestId)
                 .orElseThrow(() -> new MatchException(
@@ -233,7 +234,7 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
 
         joinRequest.setRequestStatus(JoinRequestStatus.CANCELED);
         MatchJoinRequest saved = matchJoinRequestRepository.save(joinRequest);
-        log.info("User {} successfully cancelled join request {} for match {}", userId, requestId, matchId);
+        log.info("User {} successfully cancelled join request {}", userId, requestId);
 
         return toResponse(saved);
     }
@@ -242,10 +243,17 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
     @Transactional(readOnly = true)
     public List<MatchJoinRequestResponse> getJoinRequests(UUID matchId, UUID userId) {
         log.debug("Fetching all join requests for match {} by user {}", matchId, userId);
-
         validateMatchOwner(matchId, userId);
         List<MatchJoinRequest> requests = matchJoinRequestRepository.findAllByMatchId(matchId);
+        return requests.stream()
+                .map(this::toResponse)
+                .collect(Collectors.toList());
+    }
 
+    @Override
+    public List<MatchJoinRequestResponse> getUserJoinRequests(UUID userId) {
+        log.debug("Fetching all join requests for user {}", userId);
+        List<MatchJoinRequest> requests = matchJoinRequestRepository.findAllByUserId(userId);
         return requests.stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
@@ -315,7 +323,7 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
                 .build();
 
         matchPlayerRepository.save(newPlayer);
-        log.info("Created MatchPlayerController for user {} in match {}", joinRequest.getUserId(), match.getId());
+        log.info("Created MatchPlayer for user {} in match {}", joinRequest.getUserId(), match.getId());
     }
 
     private PlayerRole convertPositionToPlayerRole(String position) {
@@ -329,6 +337,23 @@ public class MatchJoinRequestServiceImpl implements MatchJoinRequestService {
             case "attaquant" -> PlayerRole.FORWARD;
             default -> PlayerRole.UNKNOWN;
         };
+    }
+
+    private String personNameFromPosition(String position) {
+        if (position == null) {
+            return "Un joueur";
+        }
+        return switch (position.toLowerCase()) {
+            case "gardien" -> "Un gardien";
+            case "défenseur" -> "Un défenseur";
+            case "milieu" -> "Un milieu";
+            case "attaquant" -> "Un attaquant";
+            default -> "Un joueur";
+        };
+    }
+
+    private void sendJoinRequestNotification(Match match, String requesterName) {
+        notificationService.sendJoinRequestNotification(match, requesterName);
     }
 
     private MatchJoinRequestResponse toResponse(MatchJoinRequest entity) {

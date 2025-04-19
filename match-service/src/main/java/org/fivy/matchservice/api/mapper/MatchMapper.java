@@ -3,6 +3,7 @@ package org.fivy.matchservice.api.mapper;
 import org.fivy.matchservice.api.dto.request.CreateMatchRequest;
 import org.fivy.matchservice.api.dto.request.UpdateMatchRequest;
 import org.fivy.matchservice.api.dto.response.MatchDetailsResponse;
+import org.fivy.matchservice.api.dto.response.MatchHistoryResponse;
 import org.fivy.matchservice.api.dto.response.MatchResponse;
 import org.fivy.matchservice.domain.entity.*;
 import org.mapstruct.Mapper;
@@ -67,5 +68,24 @@ public interface MatchMapper {
     @Mapping(target = "cloudCoverage", source = "cloudCoverage")
     @Mapping(target = "weatherId", source = "weatherId")
     MatchDetailsResponse.WeatherResponse toWeatherResponse(MatchWeather matchWeather);
+
+    default MatchHistoryResponse toMatchHistoryResponse(Match match) {
+        return MatchHistoryResponse.builder()
+                .matchId(match.getId())
+                .title(match.getTitle())
+                .format(match.getFormat())
+                .skillLevel(match.getSkillLevel())
+                .startDate(match.getStartDate())
+                .duration(match.getDuration())
+                .status(match.getStatus())
+                .creatorId(match.getCreatorId())
+                .address(match.getLocation() != null ? match.getLocation().getAddress() : null)
+                .latitude(match.getLocation() != null && match.getLocation().getCoordinates() != null ?
+                        match.getLocation().getCoordinates().getLatitude() : null)
+                .longitude(match.getLocation() != null && match.getLocation().getCoordinates() != null ?
+                        match.getLocation().getCoordinates().getLongitude() : null)
+                .build();
+    }
+
 
 }
