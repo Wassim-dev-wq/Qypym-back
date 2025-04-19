@@ -1,3 +1,4 @@
+
 version: '3.8'
 
 services:
@@ -208,6 +209,7 @@ services:
       - POSTGRES_DB=${MATCH_DB_NAME}
       - POSTGRES_USER=${MATCH_DB_USERNAME}
       - POSTGRES_PASSWORD=${MATCH_DB_PASSWORD}
+      - SPRING_CONFIG_IMPORT=optional:configserver:http://config-server:${CONFIG_SERVER_CONTAINER_PORT}
       - SPRING_REDIS_HOST=${REDIS_HOST:-cache-redis-${ENV}}
       - SPRING_REDIS_PORT=${REDIS_CONTAINER_PORT}
       - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD}
@@ -246,6 +248,7 @@ services:
         condition: service_healthy
     environment:
       - FIREBASE_SERVICE_ACCOUNT_PATH=${FIREBASE_SERVICE_ACCOUNT_PATH}
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
       - NOTIF_MAIL_HOST=${NOTIF_MAIL_HOST}
       - NOTIF_MAIL_PORT=${NOTIF_MAIL_PORT}
       - NOTIF_MAIL_USERNAME=${NOTIF_MAIL_USERNAME}
