@@ -45,9 +45,8 @@ public class AuthController {
         log.info("Processing registration request for email: {}", request.getEmail());
 
         try {
-            String userId = keycloakService.registerUser(request);
-            return org.fivy.authservice.api.dto.response.ApiResponse.success(new RegistrationResponse(userId,
-                    "User registered successfully. Please verify your email."));
+            RegistrationResponse registrationResponse = keycloakService.registerUser(request);
+            return org.fivy.authservice.api.dto.response.ApiResponse.success(registrationResponse);
         } finally {
             MDC.clear();
         }
@@ -137,30 +136,77 @@ public class AuthController {
         }
     }
 
-    @PostMapping("/verify-email/{token}")
-    @Operation(summary = "Verify email",
-            description = "Verifies user's email address using token")
-    public org.fivy.authservice.api.dto.response.ApiResponse<Void> verifyEmail(@PathVariable String token) {
-        log.info("Processing email verification request");
-        keycloakService.verifyEmail(token);
-        return org.fivy.authservice.api.dto.response.ApiResponse.success(null);
-    }
-
-    @PostMapping("/resend-verification/{userId}")
-    @Operation(summary = "Resend verification email",
-            description = "Resends the email verification link")
-    public org.fivy.authservice.api.dto.response.ApiResponse<Void> resendVerification(@PathVariable String userId) {
-        log.info("Resending verification email for userId: {}", userId);
-        keycloakService.resendVerificationEmail(userId);
+    @PostMapping("/verify-email")
+    @Operation(summary = "Verify email with code",
+            description = "Verifies user's email address using the verification code")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Email verified successfully"),
+            @ApiResponse(responseCode = "400", description = "Invalid or expired verification code"),
+            @ApiResponse(responseCode = "404", description = "User not found")
+    })
+    public org.fivy.authservice.api.dto.response.ApiResponse<Void> verifyEmail(
+            @Valid @RequestBody VerifyEmailRequest request) {
+        log.info("Processing email verification request for userId: {}", request.getUserId());
+        keycloakService.verifyEmail(request.getCode(), request.getUserId());
         return org.fivy.authservice.api.dto.response.ApiResponse.success(null);
     }
 
     @PostMapping("/forgot-password")
     @Operation(summary = "Forgot password",
             description = "Initiates password reset process")
-    public org.fivy.authservice.api.dto.response.ApiResponse<Void> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+    @ResponseStatus(HttpStatus.OK)
+    public org.fivy.authservice.api.dto.response.ApiResponse<String> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
         log.info("Processing forgot password request for email: {}", request.getEmail());
-        keycloakService.initiatePasswordReset(request.getEmail());
+        String userId = keycloakService.initiatePasswordReset(request.getEmail());
+        return org.fivy.authservice.api.dto.response.ApiResponse.success(userId);
+    }
+
+    @PostMapping("/verify-reset-code")
+    @Operation(summary = "Verify password reset code",
+            description = "Verifies the code sent during password reset process")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Reset code verified successfully"),
+            @ApiResponse(responseCode = "400", description = "Invalid or expired reset code"),
+            @ApiResponse(responseCode = "404", description = "User not found")
+    })
+    public org.fivy.authservice.api.dto.response.ApiResponse<Boolean> verifyResetCode(
+            @Valid @RequestBody VerifyResetCodeRequest request) {
+        log.info("Processing reset code verification for userId: {}", request.getUserId());
+        boolean isValid = keycloakService.verifyResetCode(request.getCode(), request.getUserId());
+        return org.fivy.authservice.api.dto.response.ApiResponse.success(isValid);
+    }
+
+    @PostMapping("/reset-password")
+    @Operation(summary = "Reset password",
+            description = "Resets the password using the verified reset code")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Password reset successfully"),
+            @ApiResponse(responseCode = "400", description = "Invalid reset code or password requirements not met"),
+            @ApiResponse(responseCode = "404", description = "User not found")
+    })
+    public org.fivy.authservice.api.dto.response.ApiResponse<Void> resetPassword(
+            @Valid @RequestBody ResetPasswordRequest request) {
+        log.info("Processing password reset for userId: {}", request.getUserId());
+        keycloakService.resetPassword(request.getUserId(), request.getCode(), request.getNewPassword());
+        return org.fivy.authservice.api.dto.response.ApiResponse.success(null);
+    }
+
+    @DeleteMapping("/delete-account")
+    @Operation(summary = "Delete user account",
+            description = "Permanently deletes a user account and all associated data")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Account deleted successfully"),
+            @ApiResponse(responseCode = "401", description = "Unauthorized - invalid credentials"),
+            @ApiResponse(responseCode = "404", description = "User not found")
+    })
+    @SecurityRequirement(name = "bearer-auth")
+    public org.fivy.authservice.api.dto.response.ApiResponse<Void> deleteAccount(
+            @Valid @RequestBody DeleteAccountRequest request) {
+        log.info("Processing account deletion request for userId: {}", request.getUserId());
+        if (!keycloakService.validateTokenBelongsToUser(request.getToken(), request.getUserId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Unauthorized access to this account");
+        }
+        keycloakService.deleteAccount(request.getUserId());
         return org.fivy.authservice.api.dto.response.ApiResponse.success(null);
     }
 }

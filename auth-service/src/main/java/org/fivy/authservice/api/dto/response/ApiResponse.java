@@ -26,22 +26,5 @@ public class ApiResponse<T> {
                 .build();
     }
 
-    public static <T> ApiResponse<T> success(T data, String message) {
-        return ApiResponse.<T>builder()
-                .status("SUCCESS")
-                .data(data)
-                .message(message)
-                .timestamp(LocalDateTime.now())
-                .build();
-    }
-
-    public static <T> ApiResponse<T> error(String message, String errorCode) {
-        return ApiResponse.<T>builder()
-                .status("ERROR")
-                .message(message)
-                .errorCode(errorCode)
-                .timestamp(LocalDateTime.now())
-                .build();
-    }
 }
 

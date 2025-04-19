@@ -12,5 +12,5 @@ import lombok.NoArgsConstructor;
 public class PasswordResetEvent {
     private String email;
     private String resetCode;
-    private int expirationMinutes;
+    private int resetCodeTtl;
 }

@@ -11,5 +11,4 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class RegistrationResponse {
     private String userId;
-    private String message;
 }

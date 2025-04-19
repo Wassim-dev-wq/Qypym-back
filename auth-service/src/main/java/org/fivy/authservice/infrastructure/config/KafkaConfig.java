@@ -1,10 +1,13 @@
 package org.fivy.authservice.infrastructure.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.fivy.authservice.domain.event.AuthEvent;
 import org.fivy.authservice.domain.event.EmailVerificationEvent;
+import org.fivy.authservice.domain.event.PasswordResetEvent;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,8 +23,20 @@ import java.util.Map;
 @Configuration
 public class KafkaConfig {
 
+    public static final String TOPIC_AUTH_EVENTS = "auth-events";
+    public static final String TOPIC_EMAIL_VERIFICATION = "email-verification-events";
+    public static final String TOPIC_PASSWORD_RESET = "password-reset-events";
+
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
+
+    @Bean
+    public ObjectMapper objectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JavaTimeModule());
+        mapper.disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        return mapper;
+    }
 
     @Bean
     public Map<String, Object> producerConfigs() {
@@ -32,7 +47,9 @@ public class KafkaConfig {
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(JsonSerializer.TYPE_MAPPINGS,
                 "auth:org.fivy.authservice.domain.event.AuthEvent," +
-                        "email:org.fivy.authservice.domain.event.EmailVerificationEvent");
+                        "email:org.fivy.authservice.domain.event.EmailVerificationEvent," +
+                        "passwordReset:org.fivy.authservice.domain.event.PasswordResetEvent");
+        props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
 
         return props;
     }
@@ -49,7 +66,13 @@ public class KafkaConfig {
 
     @Bean
     public ProducerFactory<String, AuthEvent> authEventProducerFactory() {
-        return new DefaultKafkaProducerFactory<>(producerConfigs());
+        DefaultKafkaProducerFactory<String, AuthEvent> factory =
+                new DefaultKafkaProducerFactory<>(
+                        producerConfigs(),
+                        new StringSerializer(),
+                        new JsonSerializer<>(objectMapper())
+                );
+        return factory;
     }
 
     @Bean
@@ -59,7 +82,13 @@ public class KafkaConfig {
 
     @Bean
     public ProducerFactory<String, EmailVerificationEvent> emailVerificationEventProducerFactory() {
-        return new DefaultKafkaProducerFactory<>(producerConfigs());
+        DefaultKafkaProducerFactory<String, EmailVerificationEvent> factory =
+                new DefaultKafkaProducerFactory<>(
+                        producerConfigs(),
+                        new StringSerializer(),
+                        new JsonSerializer<>(objectMapper())
+                );
+        return factory;
     }
 
     @Bean
@@ -68,8 +97,24 @@ public class KafkaConfig {
     }
 
     @Bean
+    public ProducerFactory<String, PasswordResetEvent> passwordResetEventProducerFactory() {
+        DefaultKafkaProducerFactory<String, PasswordResetEvent> factory =
+                new DefaultKafkaProducerFactory<>(
+                        producerConfigs(),
+                        new StringSerializer(),
+                        new JsonSerializer<>(objectMapper())
+                );
+        return factory;
+    }
+
+    @Bean
+    public KafkaTemplate<String, PasswordResetEvent> kafkaTemplatePasswordReset() {
+        return new KafkaTemplate<>(passwordResetEventProducerFactory());
+    }
+
+    @Bean
     public NewTopic authEventsTopic() {
-        return TopicBuilder.name("auth-events")
+        return TopicBuilder.name(TOPIC_AUTH_EVENTS)
                 .partitions(3)
                 .replicas(1)
                 .build();
@@ -77,7 +122,15 @@ public class KafkaConfig {
 
     @Bean
     public NewTopic emailVerificationTopic() {
-        return TopicBuilder.name("email-verification-events")
+        return TopicBuilder.name(TOPIC_EMAIL_VERIFICATION)
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
+    @Bean
+    public NewTopic passwordResetTopic() {
+        return TopicBuilder.name(TOPIC_PASSWORD_RESET)
                 .partitions(3)
                 .replicas(1)
                 .build();
