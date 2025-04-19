@@ -38,4 +38,7 @@ public class UpdateMatchRequest {
 
     @Future(message = "Scheduled end time must be in the future")
     private LocalDateTime scheduledEndTime;
+
+    @Min(value = 0, message = "Price must be non-negative")
+    private Double price;
 }

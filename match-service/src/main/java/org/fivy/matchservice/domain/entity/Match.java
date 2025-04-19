@@ -8,6 +8,7 @@ import org.fivy.matchservice.domain.enums.SkillLevel;
 
 import java.time.ZonedDateTime;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -40,6 +41,9 @@ public class Match {
     @Embedded
     private Location location;
 
+    @Column(name = "price", nullable = false)
+    private double price;
+
     @Column(name = "max_players", nullable = false)
     private int maxPlayers;
 
@@ -63,6 +67,12 @@ public class Match {
     @OneToOne(mappedBy = "match", cascade = CascadeType.ALL)
     private MatchWeather weather;
 
+    @Column(name = "verification_code")
+    private String verificationCode;
+
+    @Column(name = "code_expiry_time")
+    private ZonedDateTime codeExpiryTime;
+
     @Column(name = "creator_id", nullable = false)
     private UUID creatorId;
 
@@ -79,6 +89,8 @@ public class Match {
     private ZonedDateTime deletedAt;
     private UUID deletedBy;
 
+    @Transient
+    private Map<String, String> lastEventData;
     @PrePersist
     protected void onCreate() {
         this.createdAt = ZonedDateTime.now();

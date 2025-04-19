@@ -10,7 +10,11 @@ import java.util.UUID;
 @Data
 public class MatchPlayerResponse {
     private UUID id;
+    private UUID matchId;
     private UUID playerId;
+    private UUID teamId;
+    private String teamName;
+    private Integer teamNumber;
     private String playerName;
     private String playerAvatar;
     private Integer playerLevel;

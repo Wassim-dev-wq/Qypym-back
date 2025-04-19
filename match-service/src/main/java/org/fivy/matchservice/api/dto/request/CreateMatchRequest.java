@@ -42,6 +42,11 @@ public class CreateMatchRequest {
     @NotNull(message = "Skill level is required")
     private SkillLevel skillLevel;
 
+    @NotNull(message = "Price is required")
+    @DecimalMin(value = "0.0", message = "Price must be >= 0.0")
+    @DecimalMax(value = "200.0", message = "Price must be <= 200.0")
+    private Double price;
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor

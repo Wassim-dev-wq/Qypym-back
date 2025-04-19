@@ -1,8 +1,10 @@
 package org.fivy.matchservice.application.service;
 
 import org.fivy.matchservice.api.dto.request.CreateMatchRequest;
+import org.fivy.matchservice.api.dto.request.FilterMatchesRequest;
 import org.fivy.matchservice.api.dto.request.UpdateMatchRequest;
 import org.fivy.matchservice.api.dto.response.MatchDetailsResponse;
+import org.fivy.matchservice.api.dto.response.MatchHistoryResponse;
 import org.fivy.matchservice.api.dto.response.MatchResponse;
 import org.fivy.matchservice.domain.enums.MatchStatus;
 import org.springframework.data.domain.Page;
@@ -27,4 +29,10 @@ public interface MatchService {
     MatchResponse updateMatchStatus(UUID matchId, MatchStatus newStatus);
     Page<MatchResponse> getMatches(Double latitude, Double longitude, Double distance, String skillLevel, Pageable pageable, UUID currentUserId);
 
+    Page<MatchHistoryResponse> getMatchHistory(UUID userId, Pageable pageable);
+
+    MatchHistoryResponse getMatchHistoryDetail(UUID matchId, UUID userId);
+    Page<MatchResponse> searchMatches(FilterMatchesRequest filters, Pageable pageable, UUID currentUserId);
+
+    Page<MatchResponse> getUserUpcomingMatches(UUID userId, Pageable pageable);
 }
