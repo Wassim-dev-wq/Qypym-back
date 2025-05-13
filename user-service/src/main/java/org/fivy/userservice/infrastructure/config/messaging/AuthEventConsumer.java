@@ -2,11 +2,13 @@ package org.fivy.userservice.infrastructure.config.messaging;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.fivy.userservice.api.dto.UserResponseDTO;
 import org.fivy.userservice.application.service.UserService;
 import org.fivy.userservice.domain.entity.User;
 import org.fivy.userservice.domain.event.authEvent.AuthEvent;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -17,14 +19,23 @@ import java.util.Map;
 public class AuthEventConsumer {
     private final UserService userService;
 
-    @KafkaListener(topics = "auth-events", groupId = "user-service-group")
-    public void handleAuthEvent(AuthEvent event) {
-        log.info("Received auth event: {}", event);
-
-        switch (event.getType()) {
-            case USER_REGISTERED -> handleUserRegistration(event);
-            case USER_UPDATED -> handleUserUpdate(event);
-            case USER_DELETED -> handleUserDeletion(event);
+    @KafkaListener(
+            topics = "auth-events",
+            containerFactory = "kafkaListenerContainerFactory"
+    )
+    public void handleAuthEvent(ConsumerRecord<String, AuthEvent> record, Acknowledgment ack) {
+        try {
+            AuthEvent event = record.value();
+            log.info("Received auth event: {}", event);
+            switch (event.getType()) {
+                case USER_REGISTERED -> handleUserRegistration(event);
+                case USER_UPDATED -> handleUserUpdate(event);
+                case USER_DELETED -> handleUserDeletion(event);
+            }
+            ack.acknowledge();
+        } catch (Exception e) {
+            log.error("Error processing auth event", e);
+            ack.acknowledge();
         }
     }
 
@@ -34,11 +45,9 @@ public class AuthEventConsumer {
             User user = User.builder()
                     .keycloakUserId(event.getUserId())
                     .email((String) userData.get("email"))
-                    .username((String) userData.get("username"))
                     .firstName((String) userData.get("firstName"))
                     .lastName((String) userData.get("lastName"))
                     .build();
-
             UserResponseDTO response = userService.createUserFromAuthEvent(user);
             log.info("Successfully created user profile from auth event. UserId: {}", response.getId());
         } catch (Exception e) {
