@@ -29,4 +29,15 @@ public class JwtConverter {
             );
         }
     }
+
+    public static String getTokenFromAuthentication(Authentication authentication) {
+        if (!(authentication instanceof JwtAuthenticationToken jwtAuth)) {
+            throw new MatchException(
+                    "JWT authentication required",
+                    "INVALID_AUTHENTICATION",
+                    HttpStatus.UNAUTHORIZED
+            );
+        }
+        return jwtAuth.getToken().getTokenValue();
+    }
 }

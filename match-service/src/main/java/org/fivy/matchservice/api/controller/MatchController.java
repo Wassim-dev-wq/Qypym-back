@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.UUID;
 
 import static org.fivy.matchservice.shared.JwtConverter.extractUserIdFromJwt;
+import static org.fivy.matchservice.shared.JwtConverter.getTokenFromAuthentication;
 
 @RestController
 @RequestMapping("/api/v1/matches")
@@ -94,7 +95,7 @@ public class MatchController {
     ) {
         UUID currentUserId = extractUserIdFromJwt(authentication);
         log.info("User {} fetching match: {}", currentUserId, matchId);
-        MatchResponse match = matchService.getMatch(matchId, currentUserId);
+        MatchResponse match = matchService.getMatch(matchId, currentUserId, getTokenFromAuthentication(authentication));
         return org.fivy.matchservice.api.dto.ApiResponse.success(match);
     }
 
@@ -145,7 +146,8 @@ public class MatchController {
                 distance,
                 skillLevel,
                 pageable,
-                currentUserId
+                currentUserId,
+                getTokenFromAuthentication(authentication)
         );
 
         return org.fivy.matchservice.api.dto.ApiResponse.success(matches);
@@ -175,7 +177,7 @@ public class MatchController {
         UUID currentUserId = extractUserIdFromJwt(authentication);
         log.info("User {} searching matches with filters: {}", currentUserId, filterRequest);
 
-        Page<MatchResponse> matches = matchService.searchMatches(filterRequest, pageable, currentUserId);
+        Page<MatchResponse> matches = matchService.searchMatches(filterRequest, pageable, currentUserId, getTokenFromAuthentication(authentication));
         return org.fivy.matchservice.api.dto.ApiResponse.success(matches);
     }
 

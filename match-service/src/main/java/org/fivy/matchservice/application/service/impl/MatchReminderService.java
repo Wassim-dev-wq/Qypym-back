@@ -29,13 +29,13 @@ public class MatchReminderService {
     private final MatchRepository matchRepository;
     private final MatchPlayerRepository matchPlayerRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
-    private static final long REMINDER_TIME_MINUTES = 120;
+    private static final long REMINDER_TIME_MINUTES = 300;
     private static final long REMINDER_WINDOW_MINUTES = 10;
 
-    @Scheduled(fixedRate = 5 * 60 * 1000)
+    @Scheduled(fixedRate = 2 * 60 * 1000)
     @Transactional(readOnly = true)
     public void sendMatchReminders() {
-        ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Europe/Paris"));
+        ZonedDateTime now = ZonedDateTime.now();
         ZonedDateTime startWindow = now.plus(Duration.ofMinutes(REMINDER_TIME_MINUTES - REMINDER_WINDOW_MINUTES/2));
         ZonedDateTime endWindow = now.plus(Duration.ofMinutes(REMINDER_TIME_MINUTES + REMINDER_WINDOW_MINUTES/2));
 

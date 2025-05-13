@@ -70,10 +70,6 @@ public class MatchScoreScheduler {
             }
         }
     }
-
-    /**
-     * Process a single match result by calculating median scores
-     */
     private void processMatchResult(MatchResult result) {
         UUID matchId = result.getMatch().getId();
         List<MatchScoreSubmission> submissions = scoreSubmissionRepository.findByMatchId(matchId);
