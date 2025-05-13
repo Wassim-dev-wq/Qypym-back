@@ -17,7 +17,6 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "users", indexes = {
-        @Index(name = "idx_user_username", columnList = "username"),
         @Index(name = "idx_user_email", columnList = "email"),
         @Index(name = "idx_user_phone_number", columnList = "phoneNumber"),
         @Index(name = "idx_user_keycloakUserId", columnList = "keycloakUserId")
@@ -39,10 +38,6 @@ public class User {
     @Column(nullable = false, unique = true)
     private String keycloakUserId;
 
-    @NotBlank
-    @Size(max = 255)
-    @Column(nullable = false, unique = true)
-    private String username;
 
     @NotBlank
     @Email
@@ -70,11 +65,9 @@ public class User {
     @Enumerated(EnumType.STRING)
     private PlayerLevel playerLevel;
 
-    @NotNull
     @Past
     private LocalDate dateOfBirth;
 
-    @NotNull
     @Enumerated(EnumType.STRING)
     private GenderIdentity genderIdentity;
 
@@ -83,6 +76,14 @@ public class User {
 
     @Size(max = 255)
     private String videoIntroUrl;
+
+    @Lob
+    @Column(name = "profile_photo")
+    private byte[] profilePhoto;
+
+    @Size(max = 50)
+    @Column(name = "photo_content_type")
+    private String photoContentType;
 
     @DecimalMin("-90.0")
     @DecimalMax("90.0")

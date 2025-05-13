@@ -37,6 +37,9 @@ public class UserResponseDTO implements Serializable {
     private Boolean isEmailVerified;
     private Boolean isPhoneVerified;
     private Boolean isProfileVerified;
+    private byte[] profilePhoto;
+    private String photoContentType;
+    private String photoFilename;
     private Instant createdAt;
     private Instant updatedAt;
 }
