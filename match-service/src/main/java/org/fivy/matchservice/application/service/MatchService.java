@@ -18,21 +18,20 @@ public interface MatchService {
     MatchResponse updateMatch(UUID matchId, UpdateMatchRequest request);
 
     @Transactional(readOnly = true)
-    MatchResponse getMatch(UUID matchId, UUID currentUserId);
+    MatchResponse getMatch(UUID matchId, UUID currentUserId, String tokenFromAuthentication);
 
     @Transactional(readOnly = true)
     MatchDetailsResponse getMatchWithDetails(UUID matchId, UUID currentUserId);
 
-    Page<MatchResponse> getMatches(Pageable pageable);
     Page<MatchResponse> getMatchesByCreator(UUID creatorId, Pageable pageable);
     void deleteMatch(UUID matchId);
     MatchResponse updateMatchStatus(UUID matchId, MatchStatus newStatus);
-    Page<MatchResponse> getMatches(Double latitude, Double longitude, Double distance, String skillLevel, Pageable pageable, UUID currentUserId);
+    Page<MatchResponse> getMatches(Double latitude, Double longitude, Double distance, String skillLevel, Pageable pageable, UUID currentUserId, String tokenFromAuthentication);
 
     Page<MatchHistoryResponse> getMatchHistory(UUID userId, Pageable pageable);
 
     MatchHistoryResponse getMatchHistoryDetail(UUID matchId, UUID userId);
-    Page<MatchResponse> searchMatches(FilterMatchesRequest filters, Pageable pageable, UUID currentUserId);
+    Page<MatchResponse> searchMatches(FilterMatchesRequest filters, Pageable pageable, UUID currentUserId, String tokenFromAuthentication);
 
     Page<MatchResponse> getUserUpcomingMatches(UUID userId, Pageable pageable);
 }

@@ -28,14 +28,15 @@ public class MatchCodeSchedulerService {
 
     private static final int CODE_LENGTH = 6;
     private static final long CODE_VALIDITY_MINUTES = 120;
-    private static final long GENERATE_CODE_BEFORE_MINUTES = 60;
+    private static final long GENERATE_CODE_BEFORE_MINUTES = 120;
 
-    @Scheduled(fixedRate = 5 * 60 * 1000)
+    @Scheduled(fixedRate = 2 * 60 * 1000)
     @Transactional
     public void generateUpcomingMatchCodes() {
-        ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Europe/Paris"));
+        ZonedDateTime now = ZonedDateTime.now();
         ZonedDateTime upcomingThreshold = now.plus(Duration.ofMinutes(GENERATE_CODE_BEFORE_MINUTES));
-        log.info("Checking for upcoming matches that need verification codes");
+        log.info("Checking for upcoming matches that need verification codes with threshhold {} " +
+                "and now {}", upcomingThreshold , now);
         List<Match> upcomingMatches = matchRepository.findUpcomingMatchesNeedingCodes(
                 now, upcomingThreshold);
         if (upcomingMatches.isEmpty()) {

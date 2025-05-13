@@ -18,6 +18,7 @@ import org.fivy.matchservice.domain.repository.*;
 import org.fivy.matchservice.infrastructure.config.kafka.KafkaConfig;
 import org.fivy.matchservice.shared.exception.InvalidMatchStateException;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -27,7 +28,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
 import java.util.*;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -49,6 +49,7 @@ public class MatchServiceImpl implements MatchService {
     private final PlayerRatingRepository playerRatingRepository;
     private final KafkaTemplate<String, MatchEvent> kafkaTemplate;
     private final NotificationService notificationService;
+    private final UserBlockingService userBlockingService;
 
     @Override
     public MatchResponse createMatch(UUID creatorId, CreateMatchRequest request) {
@@ -128,9 +129,17 @@ public class MatchServiceImpl implements MatchService {
 
     @Override
     @Transactional(readOnly = true)
-    public MatchResponse getMatch(UUID matchId, UUID currentUserId) {
+    public MatchResponse getMatch(UUID matchId, UUID currentUserId, String authToken) {
         log.debug("Fetching match: {}", matchId);
         Match match = findMatchOrThrow(matchId);
+        /*
+        if (userBlockingService.isUserBlocked("Bearer " + authToken, match.getCreatorId())) {
+            log.warn("User {} tried to access match {} created by blocked user {}",
+                    currentUserId, matchId, match.getCreatorId());
+            throw new org.fivy.matchservice.shared.exception.MatchException("Match not found with ID: " +
+                    matchId, "UNAUTHORIZED_ACCESS", HttpStatus.UNAUTHORIZED);
+        }
+         */
         MatchResponse response = matchMapper.toMatchResponse(match);
         response.setJoined(playerRepository.existsByMatchIdAndPlayerId(matchId, currentUserId));
         response.setMaxPlayers(match.getMaxPlayers());
@@ -139,7 +148,7 @@ public class MatchServiceImpl implements MatchService {
         response.setJoinRequestCount(
                 matchJoinRequestRepository.countByMatchIdAndRequestStatusNotIn(
                         match.getId(),
-                        List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED,  JoinRequestStatus.LEFT)
+                        List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED, JoinRequestStatus.LEFT)
                 )
         );
         response.setOwner(match.getCreatorId().equals(currentUserId));
@@ -161,12 +170,6 @@ public class MatchServiceImpl implements MatchService {
         }
         log.info(details.toString());
         return details;
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public Page<MatchResponse> getMatches(Pageable pageable) {
-        return null;
     }
 
     private List<MatchDetailsResponse.MatchPlayerResponse> mapPlayers(Match match) {
@@ -216,11 +219,37 @@ public class MatchServiceImpl implements MatchService {
             Double distance,
             String skillLevel,
             Pageable pageable,
-            UUID currentUserId
-    ) {
+            UUID currentUserId,
+            String authToken) {
         log.debug("Fetching matches with lat={}, lon={}, dist={}, skill={}",
                 latitude, longitude, distance, skillLevel);
-        Function<Match, MatchResponse> toResponseWithDetails = match -> {
+        List<UUID> blockedUserIds = userBlockingService.getBlockedUserIds("Bearer " + authToken);
+        log.debug("Found {} blocked users for user {}", blockedUserIds.size(), currentUserId);
+        Page<Match> matches;
+        if (latitude != null && longitude != null && distance != null) {
+            if (skillLevel != null && !skillLevel.isBlank()) {
+                SkillLevel skillEnum = SkillLevel.valueOf(skillLevel.toUpperCase());
+                matches = matchRepository.findAllWithinDistanceAndSkill(
+                        latitude, longitude, distance, skillEnum, pageable);
+            } else {
+                matches = matchRepository.findAllWithinDistance(
+                        latitude, longitude, distance, pageable);
+            }
+        } else if (skillLevel != null && !skillLevel.isBlank()) {
+            SkillLevel skillEnum = SkillLevel.valueOf(skillLevel.toUpperCase());
+            matches = matchRepository.findAllBySkillLevel(skillEnum, pageable);
+        } else {
+            matches = matchRepository.findAll(pageable);
+        }
+        List<Match> filteredContent = matches.getContent().stream()
+                .filter(match -> !blockedUserIds.contains(match.getCreatorId()))
+                .collect(Collectors.toList());
+        Page<Match> filteredPage = new PageImpl<>(
+                filteredContent,
+                matches.getPageable(),
+                matches.getTotalElements() - (matches.getContent().size() - filteredContent.size())
+        );
+        return filteredPage.map(match -> {
             MatchResponse response = matchMapper.toMatchResponse(match);
             response.setOwner(match.getCreatorId().equals(currentUserId));
             response.setJoined(playerRepository.existsByMatchIdAndPlayerId(match.getId(), currentUserId));
@@ -234,38 +263,12 @@ public class MatchServiceImpl implements MatchService {
                     )
             );
             return response;
-        };
-        if (latitude != null && longitude != null && distance != null) {
-            if (skillLevel != null && !skillLevel.isBlank()) {
-                SkillLevel skillEnum = SkillLevel.valueOf(skillLevel.toUpperCase());
-                return matchRepository.findAllWithinDistanceAndSkill(
-                        latitude,
-                        longitude,
-                        distance,
-                        skillEnum,
-                        pageable
-                ).map(toResponseWithDetails);
-            } else {
-                return matchRepository.findAllWithinDistance(
-                        latitude,
-                        longitude,
-                        distance,
-                        pageable
-                ).map(toResponseWithDetails);
-            }
-        }
-        if (skillLevel != null && !skillLevel.isBlank()) {
-            SkillLevel skillEnum = SkillLevel.valueOf(skillLevel.toUpperCase());
-            return matchRepository.findAllBySkillLevel(skillEnum, pageable)
-                    .map(toResponseWithDetails);
-        }
-        return matchRepository.findAll(pageable)
-                .map(toResponseWithDetails);
+        });
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Page<MatchResponse> searchMatches(FilterMatchesRequest filters, Pageable pageable, UUID currentUserId) {
+    public Page<MatchResponse> searchMatches(FilterMatchesRequest filters, Pageable pageable, UUID currentUserId, String authToken) {
         if (filters == null) {
             throw new IllegalArgumentException("Filter request cannot be null");
         }
@@ -310,8 +313,17 @@ public class MatchServiceImpl implements MatchService {
                 distance,
                 pageable
         );
-
-        return matchPage.map(match -> {
+        List<UUID> blockedUserIds = userBlockingService.getBlockedUserIds("Bearer " + authToken);
+        log.debug("Found {} blocked users for user {}", blockedUserIds.size(), currentUserId);
+        List<Match> filteredContent = matchPage.getContent().stream()
+                .filter(match -> !blockedUserIds.contains(match.getCreatorId()))
+                .collect(Collectors.toList());
+        Page<Match> filteredPage = new PageImpl<>(
+                filteredContent,
+                matchPage.getPageable(),
+                matchPage.getTotalElements() - (matchPage.getContent().size() - filteredContent.size())
+        );
+        return filteredPage.map(match -> {
             MatchResponse response = matchMapper.toMatchResponse(match);
             response.setJoined(playerRepository.existsByMatchIdAndPlayerId(match.getId(), currentUserId));
             response.setOwner(match.getCreatorId().equals(currentUserId));
@@ -320,7 +332,7 @@ public class MatchServiceImpl implements MatchService {
             response.setJoinRequestCount(
                     matchJoinRequestRepository.countByMatchIdAndRequestStatusNotIn(
                             match.getId(),
-                            List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED,  JoinRequestStatus.LEFT)
+                            List.of(JoinRequestStatus.ACCEPTED, JoinRequestStatus.CANCELED, JoinRequestStatus.LEFT)
                     )
             );
             return response;
