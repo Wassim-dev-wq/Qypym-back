@@ -24,7 +24,6 @@ public class MatchEmailListener {
             MatchEmailEvent event = record.value();
             log.info("Received match email event of type '{}' for: {}",
                     event.getEventType(), event.getEmail());
-
             boolean sent = false;
             if ("MATCH_VERIFICATION".equals(event.getEventType())) {
                 sent = matchEmailService.sendVerificationCodeEmail(event);
@@ -33,7 +32,6 @@ public class MatchEmailListener {
             } else {
                 log.warn("Unknown match email event type: {}", event.getEventType());
             }
-
             if (sent) {
                 log.info("Match email of type '{}' sent successfully to: {}",
                         event.getEventType(), event.getEmail());
