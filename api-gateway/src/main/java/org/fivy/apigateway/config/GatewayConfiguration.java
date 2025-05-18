@@ -17,7 +17,7 @@ public class GatewayConfiguration {
                         .filters(GatewayFilterSpec::tokenRelay)
                         .uri("lb://USER-SERVICE"))
                 .route("notification-service", r -> r
-                        .path("/api/v1/notifications/**", "/api/v1/user-push-tokens/**")
+                        .path("/api/v1/notifications/**", "/api/v1/user-push-tokens/**","/api/v1/notification-preferences/**")
                         .filters(GatewayFilterSpec::tokenRelay)
                         .uri("lb://NOTIFICATION-SERVICE"))
                 .route("match-service", r -> r
