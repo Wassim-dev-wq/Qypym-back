@@ -30,7 +30,6 @@ import java.util.stream.Collectors;
 @Slf4j
 public class FeedbackServiceImpl implements FeedbackService {
 
-    private final MatchRepository matchRepository;
     private final MatchPlayerRepository matchPlayerRepository;
     private final MatchFeedbackRequestRepository feedbackRequestRepository;
     private final PlayerMatchFeedbackRepository playerFeedbackRepository;
